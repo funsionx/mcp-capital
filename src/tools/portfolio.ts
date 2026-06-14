@@ -37,6 +37,19 @@ const REGISTRY: Record<SourceFilter, FetchPositions> = {
   static: staticSrc.fetchPositions,
 };
 
+/** Hard cap per source so one slow/hung API can't make the whole tool time out. */
+const SOURCE_TIMEOUT_MS = 18_000;
+/** Default: hide sub-$1 noise from the listing (still counted in totals). */
+const DEFAULT_MIN_VALUE_USD = 1;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([p.finally(() => clearTimeout(t)), timeout]);
+}
+
 interface SourceBreakdownEntry {
   valueUsd: number;
   positionCount: number;
@@ -47,7 +60,8 @@ interface Summary {
   totalValueRub: number;
   positionCount: number;
   sourceBreakdown: Record<string, SourceBreakdownEntry>;
-  positions: PositionItem[];
+  positions: Record<string, unknown>[];
+  hiddenBelowThreshold: { count: number; valueUsd: number; minValueUsd: number };
   errors: { source: string; error: string }[];
 }
 
@@ -66,15 +80,22 @@ export function registerPortfolioTool(server: McpServer): void {
           .array(z.enum(ALL_SOURCES))
           .optional()
           .describe("Filter by sources. If omitted, fetches all sources."),
+        minValueUsd: z
+          .number()
+          .optional()
+          .describe(
+            `Hide positions worth less than this (USD) from the listing; they're still counted in totals. Default ${DEFAULT_MIN_VALUE_USD}. Pass 0 to list everything.`,
+          ),
       },
     },
-    async ({ includeSources }) => {
+    async ({ includeSources, minValueUsd }) => {
+      const threshold = minValueUsd ?? DEFAULT_MIN_VALUE_USD;
       const selected = (includeSources && includeSources.length > 0
         ? includeSources
         : ALL_SOURCES) as SourceFilter[];
 
       const settled = await Promise.allSettled(
-        selected.map((s) => REGISTRY[s]()),
+        selected.map((s) => withTimeout(REGISTRY[s](), SOURCE_TIMEOUT_MS, s)),
       );
 
       const positions: PositionItem[] = [];
@@ -86,8 +107,7 @@ export function registerPortfolioTool(server: McpServer): void {
         if (result.status === "fulfilled") {
           for (const p of result.value) {
             positions.push(p);
-            const key = p.source;
-            const entry = (sourceBreakdown[key] ??= { valueUsd: 0, positionCount: 0 });
+            const entry = (sourceBreakdown[p.source] ??= { valueUsd: 0, positionCount: 0 });
             entry.valueUsd += p.value || 0;
             entry.positionCount += 1;
           }
@@ -96,22 +116,33 @@ export function registerPortfolioTool(server: McpServer): void {
         }
       });
 
+      // Totals stay accurate over ALL positions; only the listing is trimmed.
       const totalValueUsd = positions.reduce((s, p) => s + (p.value || 0), 0);
       const totalValueRub = positions.reduce((s, p) => s + (p.valueRub || 0), 0);
+      for (const k of Object.keys(sourceBreakdown)) sourceBreakdown[k]!.valueUsd = round(sourceBreakdown[k]!.valueUsd);
+
+      const shown = positions
+        .filter((p) => Math.abs(p.value || 0) >= threshold)
+        .sort((a, b) => (b.value || 0) - (a.value || 0));
+      const hidden = positions.filter((p) => Math.abs(p.value || 0) < threshold);
 
       const summary: Summary = {
         timestamp: new Date().toISOString(),
         totalValueUsd: round(totalValueUsd),
         totalValueRub: round(totalValueRub),
         positionCount: positions.length,
-        sourceBreakdown: roundBreakdown(sourceBreakdown),
-        positions,
+        sourceBreakdown,
+        positions: shown.map(compact),
+        hiddenBelowThreshold: {
+          count: hidden.length,
+          valueUsd: round(hidden.reduce((s, p) => s + (p.value || 0), 0)),
+          minValueUsd: threshold,
+        },
         errors,
       };
 
-      return {
-        content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
-      };
+      // Compact (no indentation) to minimize tokens for the consuming agent.
+      return { content: [{ type: "text", text: JSON.stringify(summary) }] };
     },
   );
 }
@@ -119,11 +150,28 @@ export function registerPortfolioTool(server: McpServer): void {
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
-function roundBreakdown(
-  b: Record<string, SourceBreakdownEntry>,
-): Record<string, SourceBreakdownEntry> {
-  for (const k of Object.keys(b)) {
-    b[k]!.valueUsd = round(b[k]!.valueUsd);
-  }
-  return b;
+
+/** Trim a position for output: round numbers, drop empty/zero optional fields. */
+function compact(p: PositionItem): Record<string, unknown> {
+  const o: Record<string, unknown> = {
+    source: p.source,
+    ticker: p.ticker,
+    name: p.name,
+    quantity: roundTo(p.quantity, 6),
+    price: round(p.price),
+    value: round(p.value),
+    currency: p.currency,
+    category: p.category,
+  };
+  if (p.chain) o.chain = p.chain;
+  if (p.priceRub != null) o.priceRub = round(p.priceRub);
+  if (p.valueRub != null) o.valueRub = round(p.valueRub);
+  if (p.apy != null) o.apy = p.apy;
+  if (p.description) o.description = p.description;
+  return o;
+}
+
+function roundTo(n: number, dp: number): number {
+  const f = 10 ** dp;
+  return Math.round(n * f) / f;
 }

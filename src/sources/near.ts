@@ -111,7 +111,11 @@ async function fetchFts(wallet: string): Promise<PositionItem[]> {
     return [];
   }
 
-  const tokens = (list.tokens ?? []).filter((t) => t.balance && t.balance !== "0");
+  // "aurora" is the Aurora engine account, not a NEP-141 FT (no ft_metadata).
+  const SKIP = new Set(["aurora"]);
+  const tokens = (list.tokens ?? []).filter(
+    (t) => t.balance && t.balance !== "0" && !SKIP.has(t.contract_id),
+  );
   const items = await Promise.all(
     tokens.map(async (t) => {
       try {

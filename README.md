@@ -48,7 +48,10 @@ filter, e.g. `{ "includeSources": ["moex", "static", "sui"] }`.
 Input:
 
 ```ts
-{ includeSources?: ("tinkoff"|"bybit"|"moex"|"evm"|"solana"|"sui"|"near"|"hyperliquid"|"static")[] }
+{
+  includeSources?: ("tinkoff"|"bybit"|"moex"|"evm"|"solana"|"sui"|"near"|"hyperliquid"|"static")[],
+  minValueUsd?: number   // hide positions below this from the listing (default 1; totals still include them). Pass 0 for everything.
+}
 ```
 
 Omit `includeSources` to fetch all. Output (single JSON text block):
@@ -56,17 +59,23 @@ Omit `includeSources` to fetch all. Output (single JSON text block):
 ```jsonc
 {
   "timestamp": "ISO-8601",
-  "totalValueUsd": 0,
+  "totalValueUsd": 0,            // over ALL positions (incl. hidden)
   "totalValueRub": 0,
-  "positionCount": 0,
+  "positionCount": 0,            // total positions found
   "sourceBreakdown": { "<source>": { "valueUsd": 0, "positionCount": 0 } },
-  "positions": [ /* PositionItem[] */ ],
+  "positions": [ /* trimmed, sorted by value desc, >= minValueUsd */ ],
+  "hiddenBelowThreshold": { "count": 0, "valueUsd": 0, "minValueUsd": 1 },
   "errors": [ { "source": "...", "error": "..." } ]
 }
 ```
 
-Sources run under `Promise.allSettled`: one source failing never breaks the rest — its
-failure shows up in `errors[]`.
+Resilience & token economy:
+- Sources run under `Promise.allSettled`, each with an **18s timeout** — one source
+  failing or hanging never breaks the rest (it shows up in `errors[]`), and the tool
+  always returns within ~18s so the calling agent can't time out on a slow upstream.
+- Output is **compact JSON** (no indentation), numbers are rounded, empty fields are
+  dropped, and sub-`minValueUsd` dust is excluded from the listing (still summed in
+  totals + reported in `hiddenBelowThreshold`) — keeps the response small for the agent.
 
 ## Sources
 

@@ -156,10 +156,13 @@ async function mapPosition(
   return item;
 }
 
+const instrumentCache = new Map<string, Instrument | undefined>();
+
 async function lookupInstrument(
   headers: Record<string, string>,
   figi: string,
 ): Promise<Instrument | undefined> {
+  if (instrumentCache.has(figi)) return instrumentCache.get(figi);
   try {
     const res = await fetchJson<InstrumentResponse>(
       INSTRUMENT,
@@ -168,8 +171,9 @@ async function lookupInstrument(
         headers,
         body: JSON.stringify({ idType: "INSTRUMENT_ID_TYPE_FIGI", id: figi }),
       },
-      { caCert: TBANK_CA },
+      { caCert: TBANK_CA, timeoutMs: 8_000 },
     );
+    instrumentCache.set(figi, res.instrument);
     return res.instrument;
   } catch (e) {
     // Degrade to figi-as-ticker rather than dropping the position.
