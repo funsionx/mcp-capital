@@ -60,7 +60,7 @@ Omit `includeSources` to fetch all. Output (single JSON text block):
 {
   "timestamp": "ISO-8601",
   "totalValueUsd": 0,            // over ALL positions (incl. hidden)
-  "totalValueRub": 0,
+  "totalValueRub": 0,           // whole portfolio at the live CBR USD/RUB rate
   "positionCount": 0,            // total positions found
   "sourceBreakdown": { "<source>": { "valueUsd": 0, "positionCount": 0 } },
   "positions": [ /* trimmed, sorted by value desc, >= minValueUsd */ ],
@@ -97,9 +97,12 @@ RUB→USD conversion uses the live CBR rate (`lib/usdRub.ts`), cached per invoca
 
 - **EVM DeFi** — Zerion returns `deposited`/`staked`/`borrowed` positions across all
   chains (incl. Plasma), tagged `category: "defi"` with `protocol`/`apy` when available.
-  When Zerion can't price an asset (e.g. AAVE aTokens like `aPlaUSDT0`, which come back
-  with `value: null`), USD-stable positions are re-priced from quantity at ~$1 so they
-  aren't silently dropped (`stableUsd()` in `evm.ts`).
+  Zerion's `no_filter` returns both the decoded deposit **and** the raw receipt/wrapper
+  token (e.g. `sUSDC`, `aBasUSDC`) — the same money. We drop the duplicates by keeping
+  only `attributes.flags.displayable !== false` (Zerion's own canonical view); tokens
+  with no decoded alternative (e.g. `aPlaUSDT0` on Plasma) stay `displayable: true` and
+  are kept. When Zerion can't price such a kept asset (`value: null`), USD-stable
+  positions are re-priced from quantity at ~$1 (`stableUsd()` in `evm.ts`).
 - **Hyperliquid** — perps account equity (`clearinghouseState.marginSummary.accountValue`)
   + spot balances + vault deposits like HLP (`userVaultEquities`). Spot is priced by token
   index from `spotMetaAndAssetCtxs` (spot names collide), only against USD-stable-quoted

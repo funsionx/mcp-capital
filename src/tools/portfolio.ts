@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FetchPositions, PositionItem, SourceFilter } from "../lib/types.ts";
 import { stringifyErr } from "../lib/http.ts";
+import { getUsdRub } from "../lib/usdRub.ts";
 
 import * as tinkoff from "../sources/tinkoff.ts";
 import * as bybit from "../sources/bybit.ts";
@@ -118,7 +119,14 @@ export function registerPortfolioTool(server: McpServer): void {
 
       // Totals stay accurate over ALL positions; only the listing is trimmed.
       const totalValueUsd = positions.reduce((s, p) => s + (p.value || 0), 0);
-      const totalValueRub = positions.reduce((s, p) => s + (p.valueRub || 0), 0);
+      // Whole portfolio converted to RUB at the live CBR rate (not just the
+      // RUB-denominated subset). Falls back to summing RUB-native positions.
+      let totalValueRub: number;
+      try {
+        totalValueRub = totalValueUsd * (await getUsdRub());
+      } catch {
+        totalValueRub = positions.reduce((s, p) => s + (p.valueRub || 0), 0);
+      }
       for (const k of Object.keys(sourceBreakdown)) sourceBreakdown[k]!.valueUsd = round(sourceBreakdown[k]!.valueUsd);
 
       const shown = positions

@@ -15,6 +15,7 @@ interface ZerionPosition {
     position_type?: string; // wallet | deposited | staked | borrowed | reward
     protocol?: string | null;
     apy?: number | null;
+    flags?: { displayable?: boolean };
     fungible_info?: {
       name?: string;
       symbol?: string;
@@ -57,6 +58,11 @@ async function fetchWallet(address: string, source: Source, auth: string): Promi
   for (const p of res.data ?? []) {
     const a = p.attributes;
     if (!a) continue;
+    // Zerion returns both the decoded DeFi deposit (displayable) AND the raw
+    // receipt/wrapper token (sUSDC, aBasUSDC, ...) — same money. Drop the
+    // non-displayable duplicates to avoid double-counting. Tokens with no decoded
+    // alternative (e.g. aPlaUSDT0 on Plasma) stay displayable=true and are kept.
+    if (a.flags?.displayable === false) continue;
     const quantity = a.quantity?.float ?? 0;
     const fi = a.fungible_info;
     let price = a.price ?? (quantity ? (a.value ?? 0) / quantity : 0);
