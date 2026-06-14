@@ -8,7 +8,7 @@ everything into USD (and RUB where applicable).
 ## Stack
 
 - **Bun** runtime
-- `@modelcontextprotocol/sdk` over stdio
+- `@modelcontextprotocol/sdk` over Streamable HTTP (`Bun.serve`) or stdio
 - TypeScript (strict), `zod` for the tool schema
 - Native `fetch`
 
@@ -25,12 +25,18 @@ need no key at all: MOEX ISS, CBR FX, CoinGecko, Jupiter, Sui/NEAR RPC.
 ## Run
 
 ```bash
-bun run start          # run the server over stdio
-bun run dev            # watch mode
+bun run start          # HTTP on PORT (default 3000), MCP endpoint /mcp
+bun run start:stdio    # stdio transport (for Cursor / local spawn)
+bun run dev            # watch mode (HTTP)
 bun run typecheck      # tsc --noEmit (strict)
-bun run inspector      # open the MCP Inspector against this server
-bun run scripts/smoke.ts   # quick end-to-end protocol check
+bun run inspector      # MCP Inspector over stdio
+bun run scripts/smoke.ts   # quick end-to-end protocol check (stdio)
 ```
+
+HTTP mode reads `PORT`, `HOST`, and `ALLOWED_ORIGINS` from the environment (see `.env.example`).
+Connect a Streamable HTTP MCP client to `http://127.0.0.1:3000/mcp`.
+
+For **Perplexity** or **ngrok**, use stateless HTTP (default): each request gets a fresh MCP session, so proxies do not need to forward `Mcp-Session-Id`. Point ngrok at the local port, then add the connector URL `https://<subdomain>.ngrok-free.dev/mcp` (no trailing slash).
 
 In the Inspector, call `get_portfolio_summary` with no arguments to fetch everything, or
 filter, e.g. `{ "includeSources": ["moex", "static", "sui"] }`.
@@ -100,4 +106,12 @@ RUB→USD conversion uses the live CBR rate (`lib/usdRub.ts`), cached per invoca
 
 ## Notes
 
+- **T-Invest TLS:** `*.tbank.ru` chains to the *Russian Trusted Root CA* (Минцифры),
+  which isn't in default trust stores (a plain `fetch` fails with
+  `SELF_SIGNED_CERT_IN_CHAIN`). That root + sub CA are pinned in
+  [`src/lib/tbankCa.ts`](src/lib/tbankCa.ts) and passed as an additional trust anchor —
+  TLS verification stays **on** (no `rejectUnauthorized:false`). Root SHA-256 ends
+  `…CA:8E:CF:31`.
+- **Rate limits:** Zerion (free tier) and CoinGecko calls retry on HTTP 429/5xx with
+  backoff that honors `Retry-After`.
 - All diagnostic logging goes to **stderr**; stdout carries only MCP protocol frames.

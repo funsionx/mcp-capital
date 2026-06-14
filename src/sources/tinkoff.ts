@@ -3,6 +3,7 @@ import { fetchJson, stringifyErr } from "../lib/http.ts";
 import { requireEnv, optionalEnv } from "../lib/env.ts";
 import { quotationToNumber, type Quotation } from "../lib/money.ts";
 import { getUsdRub } from "../lib/usdRub.ts";
+import { TBANK_CA } from "../lib/tbankCa.ts";
 
 const HOST = "https://invest-public-api.tbank.ru/rest";
 const ACCOUNTS = `${HOST}/tinkoff.public.invest.api.contract.v1.UsersService/GetAccounts`;
@@ -76,11 +77,15 @@ async function resolveAccounts(headers: Record<string, string>): Promise<Account
       .map((id) => ({ id }));
   }
 
-  const res = await fetchJson<AccountsResponse>(ACCOUNTS, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ status: "ACCOUNT_STATUS_UNSPECIFIED" }),
-  });
+  const res = await fetchJson<AccountsResponse>(
+    ACCOUNTS,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ status: "ACCOUNT_STATUS_UNSPECIFIED" }),
+    },
+    { caCert: TBANK_CA },
+  );
   // Keep open accounts only; skip closed ones.
   return (res.accounts ?? []).filter(
     (a) => !a.status || a.status === "ACCOUNT_STATUS_OPEN",
@@ -92,11 +97,15 @@ async function fetchAccountPortfolio(
   account: Account,
   usdRub: number,
 ): Promise<PositionItem[]> {
-  const portfolio = await fetchJson<PortfolioResponse>(PORTFOLIO, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ accountId: account.id }),
-  });
+  const portfolio = await fetchJson<PortfolioResponse>(
+    PORTFOLIO,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ accountId: account.id }),
+    },
+    { caCert: TBANK_CA },
+  );
   const positions = portfolio.positions ?? [];
 
   return Promise.all(
@@ -152,11 +161,15 @@ async function lookupInstrument(
   figi: string,
 ): Promise<Instrument | undefined> {
   try {
-    const res = await fetchJson<InstrumentResponse>(INSTRUMENT, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ idType: "INSTRUMENT_ID_TYPE_FIGI", id: figi }),
-    });
+    const res = await fetchJson<InstrumentResponse>(
+      INSTRUMENT,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ idType: "INSTRUMENT_ID_TYPE_FIGI", id: figi }),
+      },
+      { caCert: TBANK_CA },
+    );
     return res.instrument;
   } catch (e) {
     // Degrade to figi-as-ticker rather than dropping the position.

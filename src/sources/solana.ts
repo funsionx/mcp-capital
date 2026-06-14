@@ -70,10 +70,10 @@ async function fetchNative(rpc: string, wallet: string): Promise<PositionItem | 
 
 async function fetchTokens(rpc: string, wallet: string): Promise<PositionItem[]> {
   const result = await rpcCall<AssetsByOwner>(rpc, "getAssetsByOwner", {
-    owner: wallet,
+    ownerAddress: wallet,
     page: 1,
     limit: 1000,
-    options: { showFungible: true },
+    displayOptions: { showFungible: true, showZeroBalance: false },
   });
 
   const out: PositionItem[] = [];

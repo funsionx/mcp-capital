@@ -41,12 +41,17 @@ export async function fetchPositions(): Promise<PositionItem[]> {
 }
 
 async function fetchWallet(address: string, source: Source, auth: string): Promise<PositionItem[]> {
+  // `filter[positions]=no_filter` returns BOTH simple wallet tokens and complex
+  // DeFi positions. (There is no `filter[position_types]` query param — position_type
+  // is a response field; we categorize off it below.)
   const url =
     `${BASE}/wallets/${address}/positions/` +
-    `?filter[position_types]=wallet,deposited,borrowed,staked&currency=usd`;
-  const res = await fetchJson<ZerionResponse>(url, {
-    headers: { Authorization: auth, accept: "application/json" },
-  });
+    `?filter[positions]=no_filter&currency=usd&filter[trash]=only_non_trash`;
+  const res = await fetchJson<ZerionResponse>(
+    url,
+    { headers: { Authorization: auth, accept: "application/json" } },
+    { retries: 3 }, // free Zerion tier throttles easily
+  );
 
   const out: PositionItem[] = [];
   for (const p of res.data ?? []) {

@@ -13,7 +13,7 @@ export async function getCoinGeckoPrices(ids: string[]): Promise<Map<string, num
   const need = [...new Set(ids)].filter((id) => id && !cache.has(id));
   if (need.length > 0) {
     const url = `${BASE}?ids=${encodeURIComponent(need.join(","))}&vs_currencies=usd`;
-    const data = await fetchJson<Record<string, { usd?: number }>>(url);
+    const data = await fetchJson<Record<string, { usd?: number }>>(url, {}, { retries: 2 });
     for (const id of need) {
       const usd = data[id]?.usd;
       if (typeof usd === "number") cache.set(id, usd);

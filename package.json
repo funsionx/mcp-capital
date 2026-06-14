@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
+    "start:stdio": "bun run src/index.ts -- --stdio",
     "typecheck": "tsc --noEmit",
-    "inspector": "bunx @modelcontextprotocol/inspector bun src/index.ts"
+    "inspector": "bunx @modelcontextprotocol/inspector bun src/index.ts --stdio"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
