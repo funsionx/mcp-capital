@@ -66,7 +66,7 @@ failure shows up in `errors[]`.
 
 | Filter | Module | What it reads | Auth |
 |---|---|---|---|
-| `tinkoff` | `sources/tinkoff.ts` | T-Invest portfolio (stocks/bonds/ETF), enriched per-instrument | `TINKOFF_TOKEN`, `TINKOFF_ACCOUNT_ID` |
+| `tinkoff` | `sources/tinkoff.ts` | T-Invest portfolio across **all accounts** (auto-discovered via `GetAccounts`), stocks/bonds/ETF enriched per-instrument | `TINKOFF_TOKEN` (account id optional) |
 | `bybit` | `sources/bybit.ts` | Unified wallet balances + open linear perps | `BYBIT_API_KEY`/`SECRET` (HMAC) |
 | `moex` | `sources/moex.ts` | AKMM money-market fund (182 units) via ISS | keyless |
 | `evm` | `sources/evm.ts` | Both EVM wallets, **tokens + DeFi** (deposited/staked/borrowed) via Zerion | `ZERION_API_KEY`, `EVM_WALLET_1/2` |
