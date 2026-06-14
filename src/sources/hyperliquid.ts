@@ -1,10 +1,9 @@
 import type { PositionItem } from "../lib/types.ts";
 import { fetchJson } from "../lib/http.ts";
 import { optionalEnv } from "../lib/env.ts";
+import { isStableSymbol } from "../lib/stablecoins.ts";
 
 const INFO = "https://api.hyperliquid.xyz/info";
-
-const STABLES = new Set(["USDC", "USDT", "USDT0", "USDH", "USDE", "USD", "DAI"]);
 
 interface ClearinghouseState {
   marginSummary?: { accountValue?: string };
@@ -122,7 +121,7 @@ async function fetchSpot(wallet: string): Promise<PositionItem[]> {
     const quantity = Number(b.total ?? "0");
     if (!coin || quantity <= 0) continue;
     // Price by token index (spot names collide); stables resolve to 1.
-    const price = STABLES.has(coin.toUpperCase())
+    const price = isStableSymbol(coin)
       ? 1
       : (b.token != null ? prices.get(b.token) : undefined) ?? 0;
     out.push({
@@ -149,7 +148,7 @@ async function spotPrices(): Promise<Map<number, number>> {
     const tokens = meta.tokens ?? [];
     const usdcIndex = tokens.find((t) => (t.name ?? "").toUpperCase() === "USDC")?.index;
     const stableIdx = new Set(
-      tokens.filter((t) => STABLES.has((t.name ?? "").toUpperCase())).map((t) => t.index),
+      tokens.filter((t) => isStableSymbol(t.name)).map((t) => t.index),
     );
     const universe = meta.universe ?? [];
     const consider = (preferUsdc: boolean) =>

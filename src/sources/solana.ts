@@ -1,14 +1,10 @@
 import type { PositionItem } from "../lib/types.ts";
-import { fetchJson, stringifyErr } from "../lib/http.ts";
+import { fetchJson, jsonRpc, stringifyErr } from "../lib/http.ts";
 import { requireEnv } from "../lib/env.ts";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const JUP_PRICE = "https://lite-api.jup.ag/price/v3";
 
-interface RpcResponse<T> {
-  result?: T;
-  error?: { message?: string };
-}
 interface AssetsByOwner {
   items?: Asset[];
 }
@@ -39,16 +35,8 @@ export async function fetchPositions(): Promise<PositionItem[]> {
   return all.filter((p) => p.value > 0 || p.quantity > 0);
 }
 
-async function rpcCall<T>(rpc: string, method: string, params: unknown): Promise<T> {
-  const res = await fetchJson<RpcResponse<T>>(rpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "1", method, params }),
-  });
-  if (res.error) throw new Error(`Helius ${method}: ${res.error.message ?? "rpc error"}`);
-  if (res.result === undefined) throw new Error(`Helius ${method}: empty result`);
-  return res.result;
-}
+const rpcCall = <T>(rpc: string, method: string, params: unknown): Promise<T> =>
+  jsonRpc<T>(rpc, method, params);
 
 async function fetchNative(rpc: string, wallet: string): Promise<PositionItem | null> {
   const result = await rpcCall<{ value?: number }>(rpc, "getBalance", [wallet]);

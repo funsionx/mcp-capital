@@ -1,7 +1,8 @@
 import type { PositionItem } from "../lib/types.ts";
-import { fetchJson, stringifyErr } from "../lib/http.ts";
+import { jsonRpc, stringifyErr } from "../lib/http.ts";
 import { requireEnv } from "../lib/env.ts";
 import { getCoinGeckoPrices } from "../lib/coingecko.ts";
+import { isStableCoinType } from "../lib/stablecoins.ts";
 
 const RPC = "https://fullnode.mainnet.sui.io:443";
 const SUI_TYPE = "0x2::sui::SUI";
@@ -15,13 +16,6 @@ const COIN_COINGECKO: Record<string, string> = {
   "0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN": "tether", // wormhole USDT
 };
 
-/** Sui coinType -> ~$1 stablecoin (priced without CoinGecko). */
-const STABLE_COINTYPE = /::usdc::|::usdt::|::egusdc::|::usdy::|::ausd::/i;
-
-interface RpcResponse<T> {
-  result?: T;
-  error?: { message?: string };
-}
 interface Balance {
   coinType: string;
   totalBalance: string;
@@ -44,16 +38,7 @@ export async function fetchPositions(): Promise<PositionItem[]> {
   return fetchCoins(wallet);
 }
 
-async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetchJson<RpcResponse<T>>(RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (res.error) throw new Error(`Sui ${method}: ${res.error.message ?? "rpc error"}`);
-  if (res.result === undefined) throw new Error(`Sui ${method}: empty result`);
-  return res.result;
-}
+const rpcCall = <T>(method: string, params: unknown[]): Promise<T> => jsonRpc<T>(RPC, method, params);
 
 async function coinMetadata(coinType: string): Promise<CoinMetadata> {
   const cached = metadataCache.get(coinType);
@@ -69,7 +54,7 @@ async function coinMetadata(coinType: string): Promise<CoinMetadata> {
 }
 
 async function priceFor(coinType: string): Promise<number> {
-  if (STABLE_COINTYPE.test(coinType)) return 1;
+  if (isStableCoinType(coinType)) return 1;
   const id = COIN_COINGECKO[coinType];
   if (!id) return 0;
   const prices = await getCoinGeckoPrices([id]).catch(() => new Map<string, number>());

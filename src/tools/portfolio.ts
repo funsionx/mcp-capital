@@ -1,42 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { FetchPositions, PositionItem, SourceFilter } from "../lib/types.ts";
+import type { PositionItem } from "../lib/types.ts";
 import { stringifyErr } from "../lib/http.ts";
 import { getUsdRub } from "../lib/usdRub.ts";
-
-import * as tinkoff from "../sources/tinkoff.ts";
-import * as bybit from "../sources/bybit.ts";
-import * as moex from "../sources/moex.ts";
-import * as evm from "../sources/evm.ts";
-import * as solana from "../sources/solana.ts";
-import * as sui from "../sources/sui.ts";
-import * as near from "../sources/near.ts";
-import * as hyperliquid from "../sources/hyperliquid.ts";
-import * as staticSrc from "../sources/static.ts";
-
-const ALL_SOURCES = [
-  "tinkoff",
-  "bybit",
-  "moex",
-  "evm",
-  "solana",
-  "sui",
-  "near",
-  "hyperliquid",
-  "static",
-] as const;
-
-const REGISTRY: Record<SourceFilter, FetchPositions> = {
-  tinkoff: tinkoff.fetchPositions,
-  bybit: bybit.fetchPositions,
-  moex: moex.fetchPositions,
-  evm: evm.fetchPositions,
-  solana: solana.fetchPositions,
-  sui: sui.fetchPositions,
-  near: near.fetchPositions,
-  hyperliquid: hyperliquid.fetchPositions,
-  static: staticSrc.fetchPositions,
-};
+import { computeAllocation, type Allocation } from "../lib/analytics.ts";
+import { SOURCE_IDS, type SourceFilter, fetchFor } from "../sources/index.ts";
 
 /** Hard cap per source so one slow/hung API can't make the whole tool time out. */
 const SOURCE_TIMEOUT_MS = 18_000;
@@ -61,6 +29,7 @@ interface Summary {
   totalValueRub: number;
   positionCount: number;
   sourceBreakdown: Record<string, SourceBreakdownEntry>;
+  allocation: Allocation;
   positions: Record<string, unknown>[];
   hiddenBelowThreshold: { count: number; valueUsd: number; minValueUsd: number };
   errors: { source: string; error: string }[];
@@ -73,12 +42,14 @@ export function registerPortfolioTool(server: McpServer): void {
       title: "Get Portfolio Summary",
       description:
         "Returns a complete snapshot of the entire investment portfolio across all " +
-        "sources: T-Invest, Bybit, MOEX (AKMM), EVM wallets, Solana, Sui, Near, and " +
-        "static positions (Alfa CFA). Each position includes ticker, name, quantity, " +
-        "current price, total value in USD and RUB where available, category, and description.",
+        "sources: T-Invest, Bybit, MOEX (AKMM), EVM wallets, Solana, Sui, Near, " +
+        "Hyperliquid, and static/manual positions. Includes totals in USD and RUB, a " +
+        "per-source breakdown, an allocation block (by asset class, by chain, and " +
+        "stablecoin share), and the position list. Each position has ticker, name, " +
+        "quantity, current price, value, category, chain, and description.",
       inputSchema: {
         includeSources: z
-          .array(z.enum(ALL_SOURCES))
+          .array(z.enum(SOURCE_IDS))
           .optional()
           .describe("Filter by sources. If omitted, fetches all sources."),
         minValueUsd: z
@@ -91,12 +62,11 @@ export function registerPortfolioTool(server: McpServer): void {
     },
     async ({ includeSources, minValueUsd }) => {
       const threshold = minValueUsd ?? DEFAULT_MIN_VALUE_USD;
-      const selected = (includeSources && includeSources.length > 0
-        ? includeSources
-        : ALL_SOURCES) as SourceFilter[];
+      const selected: SourceFilter[] =
+        includeSources && includeSources.length > 0 ? includeSources : [...SOURCE_IDS];
 
       const settled = await Promise.allSettled(
-        selected.map((s) => withTimeout(REGISTRY[s](), SOURCE_TIMEOUT_MS, s)),
+        selected.map((s) => withTimeout(fetchFor(s)(), SOURCE_TIMEOUT_MS, s)),
       );
 
       const positions: PositionItem[] = [];
@@ -140,6 +110,7 @@ export function registerPortfolioTool(server: McpServer): void {
         totalValueRub: round(totalValueRub),
         positionCount: positions.length,
         sourceBreakdown,
+        allocation: computeAllocation(positions, totalValueUsd),
         positions: shown.map(compact),
         hiddenBelowThreshold: {
           count: hidden.length,

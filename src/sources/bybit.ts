@@ -1,6 +1,7 @@
 import type { PositionItem } from "../lib/types.ts";
 import { fetchJson, stringifyErr } from "../lib/http.ts";
 import { requireEnv } from "../lib/env.ts";
+import { isStableSymbol } from "../lib/stablecoins.ts";
 
 const HOST = "https://api.bybit.com";
 const RECV_WINDOW = "5000";
@@ -44,7 +45,6 @@ interface TickerList {
 }
 
 const EARN_CATEGORIES = ["FlexibleSaving", "OnChain"] as const;
-const STABLES = new Set(["USDT", "USDC", "USDE", "DAI", "USD", "BUSD", "FDUSD"]);
 
 export async function fetchPositions(): Promise<PositionItem[]> {
   const apiKey = requireEnv("BYBIT_API_KEY");
@@ -175,7 +175,7 @@ const priceCache = new Map<string, number>();
 /** Public spot price coin->USD (via USDT pair). Stables resolve to 1. */
 async function spotPrice(coin: string): Promise<number> {
   const up = coin.toUpperCase();
-  if (STABLES.has(up)) return 1;
+  if (isStableSymbol(up)) return 1;
   if (priceCache.has(up)) return priceCache.get(up)!;
   try {
     const res = await fetchJson<BybitEnvelope<TickerList>>(

@@ -11,18 +11,6 @@ export type Source =
   | "hyperliquid"
   | "static";
 
-/** Coarse source token accepted by the tool's `includeSources` filter. */
-export type SourceFilter =
-  | "tinkoff"
-  | "bybit"
-  | "moex"
-  | "evm"
-  | "solana"
-  | "sui"
-  | "near"
-  | "hyperliquid"
-  | "static";
-
 export type Category =
   | "stock"
   | "bond"

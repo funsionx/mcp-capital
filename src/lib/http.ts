@@ -86,6 +86,34 @@ export async function fetchText(
   return text;
 }
 
+/**
+ * Minimal JSON-RPC 2.0 POST helper shared by the chain sources (sui/solana/near).
+ * Throws on an `error` member or a missing `result`.
+ */
+export async function jsonRpc<T>(
+  url: string,
+  method: string,
+  params: unknown,
+  init: RequestInit = {},
+  opts: HttpOpts = {},
+): Promise<T> {
+  const res = await fetchJson<{ result?: T; error?: { message?: string } | string }>(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    },
+    opts,
+  );
+  if (res.error) {
+    const msg = typeof res.error === "string" ? res.error : res.error.message ?? JSON.stringify(res.error);
+    throw new Error(`rpc ${method}: ${msg}`);
+  }
+  if (res.result === undefined) throw new Error(`rpc ${method}: empty result`);
+  return res.result;
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).host;

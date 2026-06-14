@@ -1,6 +1,7 @@
 import type { Category, PositionItem, Source } from "../lib/types.ts";
 import { fetchJson } from "../lib/http.ts";
 import { requireEnv } from "../lib/env.ts";
+import { usdStableValue } from "../lib/stablecoins.ts";
 
 const BASE = "https://api.zerion.io/v1";
 
@@ -72,7 +73,7 @@ async function fetchWallet(address: string, source: Source, auth: string): Promi
     // Plasma) and returns value/price null -> the position silently shows $0.
     // Recover USD-stable positions (incl. aToken wrappers, ~1:1 with underlying).
     if ((value === 0 || a.value == null) && quantity > 0) {
-      const stable = stableUsd(fi?.symbol, fi?.name);
+      const stable = usdStableValue(fi?.symbol, fi?.name);
       if (stable != null) {
         price = stable;
         value = stable * quantity;
@@ -100,15 +101,6 @@ async function fetchWallet(address: string, source: Source, auth: string): Promi
     });
   }
   return out;
-}
-
-/** ~$1 if symbol/name looks like a USD stablecoin (incl. aToken wrappers). */
-function stableUsd(symbol?: string, name?: string): number | null {
-  const s = `${symbol ?? ""} ${name ?? ""}`.toLowerCase();
-  // Strip common wrapper prefixes so "aPlaUSDT0" / "Aave Plasma USDT0" match.
-  if (/\b(usdt0?|usdc|usde|usdh|dai|usds|usdd|tusd|fdusd|busd|frax|gusd)\b/.test(s)) return 1;
-  if (/aave .*usd|plasma usd|usd vault/.test(s)) return 1;
-  return null;
 }
 
 function describe(

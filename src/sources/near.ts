@@ -1,5 +1,5 @@
 import type { PositionItem } from "../lib/types.ts";
-import { fetchJson, stringifyErr } from "../lib/http.ts";
+import { fetchJson, jsonRpc, stringifyErr } from "../lib/http.ts";
 import { requireEnv } from "../lib/env.ts";
 import { getCoinGeckoPrices } from "../lib/coingecko.ts";
 
@@ -18,10 +18,6 @@ const FT_COINGECKO: Record<string, string> = {
   "token.sweat": "sweatcoin",
 };
 
-interface RpcResponse<T> {
-  result?: T;
-  error?: unknown;
-}
 interface ViewAccount {
   amount?: string;
 }
@@ -70,16 +66,7 @@ export async function fetchPositions(): Promise<PositionItem[]> {
   return items;
 }
 
-async function rpcCall<T>(method: string, params: unknown): Promise<T> {
-  const res = await fetchJson<RpcResponse<T>>(RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "1", method, params }),
-  });
-  if (res.error) throw new Error(`NEAR ${method}: ${JSON.stringify(res.error)}`);
-  if (res.result === undefined) throw new Error(`NEAR ${method}: empty result`);
-  return res.result;
-}
+const rpcCall = <T>(method: string, params: unknown): Promise<T> => jsonRpc<T>(RPC, method, params);
 
 async function fetchNative(wallet: string): Promise<PositionItem | null> {
   const acc = await rpcCall<ViewAccount>("query", {

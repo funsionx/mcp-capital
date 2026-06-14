@@ -63,6 +63,11 @@ Omit `includeSources` to fetch all. Output (single JSON text block):
   "totalValueRub": 0,           // whole portfolio at the live CBR USD/RUB rate
   "positionCount": 0,            // total positions found
   "sourceBreakdown": { "<source>": { "valueUsd": 0, "positionCount": 0 } },
+  "allocation": {
+    "byCategory": { "<category>": { "valueUsd": 0, "pct": 0 } },   // asset class
+    "byChain":    { "<chain>": { "valueUsd": 0, "pct": 0 } },      // "offchain" = brokerage/cash
+    "stablecoin": { "valueUsd": 0, "pct": 0 }                      // share in USD stables
+  },
   "positions": [ /* trimmed, sorted by value desc, >= minValueUsd */ ],
   "hiddenBelowThreshold": { "count": 0, "valueUsd": 0, "minValueUsd": 1 },
   "errors": [ { "source": "...", "error": "..." } ]
@@ -92,6 +97,33 @@ Resilience & token economy:
 | `static` | `sources/static.ts` | ЦФА Альфа + **manual positions** (кубышка ВТБ, etc.) | local (file/env) |
 
 RUB→USD conversion uses the live CBR rate (`lib/usdRub.ts`), cached per invocation.
+
+## Adding a source
+
+Sources are isolated and uniform — each is one file exporting a single function:
+
+```ts
+// src/sources/<name>.ts
+import type { PositionItem } from "../lib/types.ts";
+export async function fetchPositions(): Promise<PositionItem[]> {
+  // fetch, normalize into PositionItem[], throw on whole-source failure
+}
+```
+
+Then register it with **one line** in [`src/sources/index.ts`](src/sources/index.ts):
+
+```ts
+export const SOURCES = [
+  // ...existing...
+  { id: "mynewsource", fetch: mynewsource },
+] as const ...;
+```
+
+That's it — the tool's `includeSources` enum and the `SourceFilter` type derive from
+that array automatically; `tools/portfolio.ts` needs no changes. Shared building blocks:
+`lib/http.ts` (`fetchJson` / `fetchText` / `jsonRpc` with timeouts + retries),
+`lib/coingecko.ts`, `lib/usdRub.ts`, `lib/stablecoins.ts`, `lib/money.ts`. The server
+transports live in `src/server/` and the entry point (`src/index.ts`) just wires them.
 
 ## DeFi coverage
 
