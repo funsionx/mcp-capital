@@ -62,7 +62,7 @@ Omit `includeSources` to fetch all. Output (single JSON text block):
   "totalValueUsd": 0,            // over ALL positions (incl. hidden)
   "totalValueRub": 0,           // whole portfolio at the live CBR USD/RUB rate
   "positionCount": 0,            // total positions found
-  "sourceBreakdown": { "<source>": { "valueUsd": 0, "positionCount": 0 } },
+  "sourceBreakdown": { "<source>": { "label": "Friendly name", "valueUsd": 0, "positionCount": 0 } },
   "allocation": {
     "byCategory": { "<category>": { "valueUsd": 0, "pct": 0 } },   // asset class
     "byChain":    { "<chain>": { "valueUsd": 0, "pct": 0 } },      // "offchain" = brokerage/cash
@@ -143,6 +143,13 @@ transports live in `src/server/` and the entry point (`src/index.ts`) just wires
 - **NEAR staking** — delegated stake is discovered via FastNear (`/staking`) and read per
   pool with `get_account_total_balance` (e.g. `here.poolv1.near`), tagged `category:"defi"`.
 - **Bybit Earn** — flexible savings / on-chain earn positions, priced via spot tickers.
+
+## Source display names
+
+`sourceBreakdown[*].label` carries a human-friendly name per source (e.g. `tinkoff` →
+"Российский фондовый рынок", `evm_1` → "EVM 1 (The Vault)", `static` → "Депозиты
+(<asset names>)"). Edit the map in [`src/lib/labels.ts`](src/lib/labels.ts) — purely
+cosmetic, no effect on data.
 
 ## Manual positions
 

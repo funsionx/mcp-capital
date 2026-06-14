@@ -4,6 +4,7 @@ import type { PositionItem } from "../lib/types.ts";
 import { stringifyErr } from "../lib/http.ts";
 import { getUsdRub } from "../lib/usdRub.ts";
 import { computeAllocation, type Allocation } from "../lib/analytics.ts";
+import { sourceLabel, staticLabel } from "../lib/labels.ts";
 import { SOURCE_IDS, type SourceFilter, fetchFor } from "../sources/index.ts";
 
 /** Hard cap per source so one slow/hung API can't make the whole tool time out. */
@@ -20,6 +21,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 }
 
 interface SourceBreakdownEntry {
+  label: string;
   valueUsd: number;
   positionCount: number;
 }
@@ -78,7 +80,7 @@ export function registerPortfolioTool(server: McpServer): void {
         if (result.status === "fulfilled") {
           for (const p of result.value) {
             positions.push(p);
-            const entry = (sourceBreakdown[p.source] ??= { valueUsd: 0, positionCount: 0 });
+            const entry = (sourceBreakdown[p.source] ??= { label: "", valueUsd: 0, positionCount: 0 });
             entry.valueUsd += p.value || 0;
             entry.positionCount += 1;
           }
@@ -97,7 +99,12 @@ export function registerPortfolioTool(server: McpServer): void {
       } catch {
         totalValueRub = positions.reduce((s, p) => s + (p.valueRub || 0), 0);
       }
-      for (const k of Object.keys(sourceBreakdown)) sourceBreakdown[k]!.valueUsd = round(sourceBreakdown[k]!.valueUsd);
+      for (const k of Object.keys(sourceBreakdown)) {
+        const entry = sourceBreakdown[k]!;
+        entry.valueUsd = round(entry.valueUsd);
+        entry.label =
+          k === "static" ? staticLabel(positions.filter((p) => p.source === "static")) : sourceLabel(k as Parameters<typeof sourceLabel>[0]);
+      }
 
       const shown = positions
         .filter((p) => Math.abs(p.value || 0) >= threshold)
