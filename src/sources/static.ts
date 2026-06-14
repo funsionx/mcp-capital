@@ -27,19 +27,8 @@ interface ManualInput {
   description?: string;
 }
 
-const DEFAULTS: ManualInput[] = [
-  {
-    ticker: "ALFA_CFA",
-    name: "ЦФА Альфа",
-    valueRub: 50_000,
-    category: "cfa",
-    currency: "RUB",
-    description: "Цифровой финансовый актив Альфа (внебиржевая позиция, фиксированная стоимость)",
-  },
-];
-
 export async function fetchPositions(): Promise<PositionItem[]> {
-  const merged = mergeByTicker([DEFAULTS, await fromFile(), fromEnv()]);
+  const merged = mergeByTicker([await fromFile(), fromEnv()]);
   const usdRub = await getUsdRub();
   return merged.map((m) => toPosition(m, usdRub));
 }
@@ -84,7 +73,9 @@ function mergeByTicker(groups: ManualInput[][]): ManualInput[] {
 
 async function fromFile(): Promise<ManualInput[]> {
   try {
-    const file = Bun.file(new URL("../../positions.local.json", import.meta.url));
+    const file = Bun.file(
+      new URL("../../positions.local.json", import.meta.url)
+    );
     if (!(await file.exists())) return [];
     const parsed = JSON.parse(await file.text());
     return Array.isArray(parsed) ? (parsed as ManualInput[]) : [];
@@ -101,7 +92,9 @@ function fromEnv(): ManualInput[] {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as ManualInput[]) : [];
   } catch (e) {
-    console.error(`[static] MANUAL_POSITIONS ignored (invalid JSON): ${stringifyErr(e)}`);
+    console.error(
+      `[static] MANUAL_POSITIONS ignored (invalid JSON): ${stringifyErr(e)}`
+    );
     return [];
   }
 }

@@ -5,6 +5,7 @@ import { getCoinGeckoPrices } from "../lib/coingecko.ts";
 
 const RPC = "https://rpc.mainnet.near.org";
 const FASTNEAR = (acc: string) => `https://api.fastnear.com/v1/account/${acc}/ft`;
+const FASTNEAR_STAKING = (acc: string) => `https://api.fastnear.com/v1/account/${acc}/staking`;
 
 /** Known NEAR FT contract -> CoinGecko id. Unknown tokens are listed at price 0. */
 const FT_COINGECKO: Record<string, string> = {
@@ -35,16 +36,20 @@ interface FtMetadata {
 interface FastNearFt {
   tokens?: { contract_id: string; balance?: string }[];
 }
+interface FastNearStaking {
+  pools?: { pool_id: string }[];
+}
 
 export async function fetchPositions(): Promise<PositionItem[]> {
   const wallet = requireEnv("NEAR_WALLET");
 
-  const [native, fts] = await Promise.all([
+  const [native, fts, staked] = await Promise.all([
     fetchNative(wallet),
     fetchFts(wallet),
+    fetchStaking(wallet),
   ]);
 
-  const items = native ? [native, ...fts] : fts;
+  const items = [...(native ? [native] : []), ...fts, ...staked];
 
   // Price native NEAR + any FT we have a CoinGecko mapping for.
   const ids = new Set<string>(["near"]);
@@ -134,6 +139,59 @@ async function fetchFts(wallet: string): Promise<PositionItem[]> {
     }),
   );
   return items.filter((x): x is PositionItem => x !== null);
+}
+
+/** Staked NEAR delegated to staking pools (e.g. here.poolv1.near). */
+async function fetchStaking(wallet: string): Promise<PositionItem[]> {
+  let list: FastNearStaking;
+  try {
+    list = await fetchJson<FastNearStaking>(FASTNEAR_STAKING(wallet));
+  } catch (e) {
+    console.error(`[near] FastNear staking list failed: ${stringifyErr(e)}`);
+    return [];
+  }
+
+  const pools = (list.pools ?? []).map((p) => p.pool_id).filter(Boolean);
+  const items = await Promise.all(
+    pools.map(async (pool) => {
+      try {
+        const total = await viewU128(pool, "get_account_total_balance", { account_id: wallet });
+        const near = Number(total) / 1e24;
+        if (near <= 0) return null;
+        const item: PositionItem = {
+          source: "near",
+          ticker: "NEAR", // priced as NEAR below
+          name: `Staked NEAR @ ${pool}`,
+          quantity: near,
+          price: 0,
+          value: 0,
+          currency: "NEAR",
+          category: "defi",
+          chain: "near",
+          description: `Delegated stake in ${pool}`,
+        };
+        return item;
+      } catch (e) {
+        console.error(`[near] staking ${pool} skipped: ${stringifyErr(e)}`);
+        return null;
+      }
+    }),
+  );
+  return items.filter((x): x is PositionItem => x !== null);
+}
+
+/** Call a view method returning a U128 (JSON-quoted yoctoNEAR string). */
+async function viewU128(contract: string, method: string, args: object): Promise<bigint> {
+  const res = await rpcCall<CallFunctionResult>("query", {
+    request_type: "call_function",
+    finality: "final",
+    account_id: contract,
+    method_name: method,
+    args_base64: Buffer.from(JSON.stringify(args)).toString("base64"),
+  });
+  const json = Buffer.from(res.result ?? []).toString("utf8").trim();
+  // U128 view methods return a JSON string like "12345..."
+  return BigInt(JSON.parse(json));
 }
 
 async function ftMetadata(contract: string): Promise<FtMetadata> {

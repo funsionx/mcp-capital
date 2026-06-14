@@ -18,7 +18,16 @@ interface SpotMeta {
   tokens?: { name?: string; index?: number }[];
   universe?: { tokens?: [number, number]; index?: number }[];
 }
-type SpotAssetCtx = { midPx?: string | null };
+type SpotAssetCtx = { midPx?: string | null; dayNtlVlm?: string };
+interface VaultEquity {
+  vaultAddress?: string;
+  equity?: string;
+  lockedUntilTimestamp?: number;
+}
+
+// Ignore mids from illiquid spot pairs — they produce phantom valuations
+// (e.g. an unknown airdropped token quoted at a stale price).
+const MIN_SPOT_VOL_USD = 10_000;
 
 /**
  * Hyperliquid (HyperCore) holdings by address: perps account equity + spot
@@ -31,11 +40,37 @@ export async function fetchPositions(): Promise<PositionItem[]> {
   const wallet = optionalEnv("HYPERLIQUID_WALLET") ?? optionalEnv("EVM_WALLET_2");
   if (!wallet) throw new Error("Set HYPERLIQUID_WALLET (or EVM_WALLET_2) for Hyperliquid");
 
-  const [perps, spot] = await Promise.all([
+  const [perps, spot, vaults] = await Promise.all([
     fetchPerps(wallet),
     fetchSpot(wallet),
+    fetchVaults(wallet),
   ]);
-  return [...perps, ...spot];
+  return [...perps, ...spot, ...vaults];
+}
+
+/** Deposits in Hyperliquid vaults (e.g. HLP). Equity is the USD value. */
+async function fetchVaults(wallet: string): Promise<PositionItem[]> {
+  const vaults = await post<VaultEquity[]>({ type: "userVaultEquities", user: wallet });
+  const out: PositionItem[] = [];
+  for (const v of vaults ?? []) {
+    const equity = Number(v.equity ?? "0");
+    if (equity <= 0) continue;
+    const addr = v.vaultAddress ?? "";
+    const isHlp = addr.toLowerCase() === "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303";
+    out.push({
+      source: "hyperliquid",
+      ticker: isHlp ? "HLP" : "HL-VAULT",
+      name: isHlp ? "Hyperliquid HLP vault" : `Hyperliquid vault ${addr.slice(0, 8)}…`,
+      quantity: 1,
+      price: equity,
+      value: equity,
+      currency: "USDC",
+      category: "defi",
+      chain: "hyperliquid",
+      description: `Vault deposit${v.lockedUntilTimestamp ? `, locked until ${new Date(v.lockedUntilTimestamp).toISOString().slice(0, 10)}` : ""}`,
+    });
+  }
+  return out;
 }
 
 async function post<T>(body: unknown): Promise<T> {
@@ -119,8 +154,10 @@ async function spotPrices(): Promise<Map<number, number>> {
     const universe = meta.universe ?? [];
     const consider = (preferUsdc: boolean) =>
       universe.forEach((pair, i) => {
-        const mid = ctxs[i]?.midPx;
+        const ctx = ctxs[i];
+        const mid = ctx?.midPx;
         if (!pair.tokens || mid == null) return;
+        if (Number(ctx?.dayNtlVlm ?? "0") < MIN_SPOT_VOL_USD) return; // skip illiquid pairs
         const [baseIdx, quoteIdx] = pair.tokens;
         const px = Number(mid);
         if (!Number.isFinite(px) || px <= 0) return;

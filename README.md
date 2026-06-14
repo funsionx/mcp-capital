@@ -78,8 +78,8 @@ failure shows up in `errors[]`.
 | `evm` | `sources/evm.ts` | Both EVM wallets, **tokens + DeFi** (deposited/staked/borrowed) via Zerion, all chains incl. Plasma | `ZERION_API_KEY`, `EVM_WALLET_1/2` |
 | `solana` | `sources/solana.ts` | Native SOL + SPL tokens via Helius DAS; Jupiter price fallback | `HELIUS_API_KEY`, `SOLANA_WALLET` |
 | `sui` | `sources/sui.ts` | Sui spot coins (AlphaLend DeFi not valued yet) | keyless RPC |
-| `near` | `sources/near.ts` | Native NEAR + fungible tokens via FastNear + RPC metadata | keyless |
-| `hyperliquid` | `sources/hyperliquid.ts` | HyperCore **perps account equity + spot balances** | keyless (`HYPERLIQUID_WALLET`, default `EVM_WALLET_2`) |
+| `near` | `sources/near.ts` | Native NEAR + fungible tokens + **staked NEAR** (delegated pools) | keyless |
+| `hyperliquid` | `sources/hyperliquid.ts` | HyperCore **perps equity + spot + vault deposits (HLP)** | keyless (`HYPERLIQUID_WALLET`, default `EVM_WALLET_2`) |
 | `static` | `sources/static.ts` | ЦФА Альфа + **manual positions** (кубышка ВТБ, etc.) | local (file/env) |
 
 RUB→USD conversion uses the live CBR rate (`lib/usdRub.ts`), cached per invocation.
@@ -92,8 +92,12 @@ RUB→USD conversion uses the live CBR rate (`lib/usdRub.ts`), cached per invoca
   with `value: null`), USD-stable positions are re-priced from quantity at ~$1 so they
   aren't silently dropped (`stableUsd()` in `evm.ts`).
 - **Hyperliquid** — perps account equity (`clearinghouseState.marginSummary.accountValue`)
-  plus spot balances priced by token index from `spotMetaAndAssetCtxs` (spot token names
-  collide, so pricing is by index, against USD-stable-quoted pairs).
+  + spot balances + vault deposits like HLP (`userVaultEquities`). Spot is priced by token
+  index from `spotMetaAndAssetCtxs` (spot names collide), only against USD-stable-quoted
+  pairs **with >$10k/24h volume** — illiquid/junk tokens are left at $0 to avoid phantom
+  valuations (e.g. a stray airdropped token quoted at a stale price).
+- **NEAR staking** — delegated stake is discovered via FastNear (`/staking`) and read per
+  pool with `get_account_total_balance` (e.g. `here.poolv1.near`), tagged `category:"defi"`.
 - **Bybit Earn** — flexible savings / on-chain earn positions, priced via spot tickers.
 
 ## Manual positions
