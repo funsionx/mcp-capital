@@ -58,13 +58,25 @@ async function fetchWallet(address: string, source: Source, auth: string): Promi
     const a = p.attributes;
     if (!a) continue;
     const quantity = a.quantity?.float ?? 0;
-    const value = a.value ?? 0;
+    const fi = a.fungible_info;
+    let price = a.price ?? (quantity ? (a.value ?? 0) / quantity : 0);
+    let value = a.value ?? 0;
+
+    // Zerion sometimes can't price an asset (e.g. AAVE aTokens like aPlaUSDT0 on
+    // Plasma) and returns value/price null -> the position silently shows $0.
+    // Recover USD-stable positions (incl. aToken wrappers, ~1:1 with underlying).
+    if ((value === 0 || a.value == null) && quantity > 0) {
+      const stable = stableUsd(fi?.symbol, fi?.name);
+      if (stable != null) {
+        price = stable;
+        value = stable * quantity;
+      }
+    }
     if (quantity === 0 && value === 0) continue;
 
     const positionType = a.position_type ?? "wallet";
     const isDefi = positionType !== "wallet";
     const category: Category = isDefi ? "defi" : "crypto";
-    const fi = a.fungible_info;
     const protocol = a.protocol ?? undefined;
 
     out.push({
@@ -72,7 +84,7 @@ async function fetchWallet(address: string, source: Source, auth: string): Promi
       ticker: fi?.symbol ?? "?",
       name: fi?.name ?? fi?.symbol ?? "?",
       quantity,
-      price: a.price ?? (quantity ? value / quantity : 0),
+      price,
       value,
       currency: fi?.symbol ?? "USD",
       category,
@@ -82,6 +94,15 @@ async function fetchWallet(address: string, source: Source, auth: string): Promi
     });
   }
   return out;
+}
+
+/** ~$1 if symbol/name looks like a USD stablecoin (incl. aToken wrappers). */
+function stableUsd(symbol?: string, name?: string): number | null {
+  const s = `${symbol ?? ""} ${name ?? ""}`.toLowerCase();
+  // Strip common wrapper prefixes so "aPlaUSDT0" / "Aave Plasma USDT0" match.
+  if (/\b(usdt0?|usdc|usde|usdh|dai|usds|usdd|tusd|fdusd|busd|frax|gusd)\b/.test(s)) return 1;
+  if (/aave .*usd|plasma usd|usd vault/.test(s)) return 1;
+  return null;
 }
 
 function describe(

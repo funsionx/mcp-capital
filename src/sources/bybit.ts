@@ -30,17 +30,33 @@ interface BybitPosition {
   leverage?: string;
   unrealisedPnl?: string;
 }
+interface EarnList {
+  list?: EarnPosition[];
+}
+interface EarnPosition {
+  coin?: string;
+  amount?: string;
+  totalPnl?: string;
+  productId?: string;
+}
+interface TickerList {
+  list?: { symbol?: string; lastPrice?: string }[];
+}
+
+const EARN_CATEGORIES = ["FlexibleSaving", "OnChain"] as const;
+const STABLES = new Set(["USDT", "USDC", "USDE", "DAI", "USD", "BUSD", "FDUSD"]);
 
 export async function fetchPositions(): Promise<PositionItem[]> {
   const apiKey = requireEnv("BYBIT_API_KEY");
   const apiSecret = requireEnv("BYBIT_API_SECRET");
 
-  const [wallet, positions] = await Promise.all([
+  const [wallet, positions, earn] = await Promise.all([
     fetchWallet(apiKey, apiSecret),
     fetchOpenPositions(apiKey, apiSecret),
+    fetchEarn(apiKey, apiSecret),
   ]);
 
-  return [...wallet, ...positions];
+  return [...wallet, ...positions, ...earn];
 }
 
 async function signedGet<T>(
@@ -119,6 +135,58 @@ async function fetchOpenPositions(apiKey: string, apiSecret: string): Promise<Po
     // Derivatives may be disabled on the account; don't fail the whole source.
     console.error(`[bybit] open positions unavailable: ${stringifyErr(e)}`);
     return [];
+  }
+}
+
+async function fetchEarn(apiKey: string, apiSecret: string): Promise<PositionItem[]> {
+  const out: PositionItem[] = [];
+  for (const category of EARN_CATEGORIES) {
+    try {
+      const query = `category=${category}`;
+      const result = await signedGet<EarnList>(apiKey, apiSecret, "/v5/earn/position", query);
+      for (const p of result.list ?? []) {
+        const coin = p.coin ?? "";
+        const quantity = num(p.amount);
+        if (!coin || quantity <= 0) continue;
+        const price = await spotPrice(coin);
+        out.push({
+          source: "bybit",
+          ticker: coin,
+          name: `${coin} (Earn)`,
+          quantity,
+          price,
+          value: price * quantity,
+          currency: coin,
+          category: "defi",
+          chain: "bybit",
+          description: `Bybit Earn — ${category}${p.totalPnl ? `, PnL ${p.totalPnl}` : ""}`,
+        });
+      }
+    } catch (e) {
+      // A category may be unsupported or empty; don't fail the whole source.
+      console.error(`[bybit] earn ${category} unavailable: ${stringifyErr(e)}`);
+    }
+  }
+  return out;
+}
+
+const priceCache = new Map<string, number>();
+
+/** Public spot price coin->USD (via USDT pair). Stables resolve to 1. */
+async function spotPrice(coin: string): Promise<number> {
+  const up = coin.toUpperCase();
+  if (STABLES.has(up)) return 1;
+  if (priceCache.has(up)) return priceCache.get(up)!;
+  try {
+    const res = await fetchJson<BybitEnvelope<TickerList>>(
+      `${HOST}/v5/market/tickers?category=spot&symbol=${up}USDT`,
+    );
+    const last = num(res.result?.list?.[0]?.lastPrice);
+    priceCache.set(up, last);
+    return last;
+  } catch {
+    priceCache.set(up, 0);
+    return 0;
   }
 }
 

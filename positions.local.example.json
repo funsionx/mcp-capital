@@ -1,0 +1,17 @@
+[
+  {
+    "ticker": "VTB_KUBYSHKA",
+    "name": "Кубышка ВТБ",
+    "valueRub": 500000,
+    "category": "mmf",
+    "currency": "RUB",
+    "description": "Накопительный счёт ВТБ (вручную; обновляй значение по факту)"
+  },
+  {
+    "ticker": "SOME_USD_HOLDING",
+    "name": "Пример позиции в USD",
+    "value": 1234.56,
+    "category": "crypto",
+    "description": "Если стоимость уже в USD — используй поле value вместо valueRub"
+  }
+]

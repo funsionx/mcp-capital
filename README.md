@@ -48,7 +48,7 @@ filter, e.g. `{ "includeSources": ["moex", "static", "sui"] }`.
 Input:
 
 ```ts
-{ includeSources?: ("tinkoff"|"bybit"|"moex"|"evm"|"solana"|"sui"|"near"|"static")[] }
+{ includeSources?: ("tinkoff"|"bybit"|"moex"|"evm"|"solana"|"sui"|"near"|"hyperliquid"|"static")[] }
 ```
 
 Omit `includeSources` to fetch all. Output (single JSON text block):
@@ -73,34 +73,51 @@ failure shows up in `errors[]`.
 | Filter | Module | What it reads | Auth |
 |---|---|---|---|
 | `tinkoff` | `sources/tinkoff.ts` | T-Invest portfolio across **all accounts** (auto-discovered via `GetAccounts`), stocks/bonds/ETF enriched per-instrument | `TINKOFF_TOKEN` (account id optional) |
-| `bybit` | `sources/bybit.ts` | Unified wallet balances + open linear perps | `BYBIT_API_KEY`/`SECRET` (HMAC) |
+| `bybit` | `sources/bybit.ts` | Unified wallet balances + open linear perps + **Earn** (FlexibleSaving/OnChain) | `BYBIT_API_KEY`/`SECRET` (HMAC) |
 | `moex` | `sources/moex.ts` | AKMM money-market fund (182 units) via ISS | keyless |
-| `evm` | `sources/evm.ts` | Both EVM wallets, **tokens + DeFi** (deposited/staked/borrowed) via Zerion | `ZERION_API_KEY`, `EVM_WALLET_1/2` |
+| `evm` | `sources/evm.ts` | Both EVM wallets, **tokens + DeFi** (deposited/staked/borrowed) via Zerion, all chains incl. Plasma | `ZERION_API_KEY`, `EVM_WALLET_1/2` |
 | `solana` | `sources/solana.ts` | Native SOL + SPL tokens via Helius DAS; Jupiter price fallback | `HELIUS_API_KEY`, `SOLANA_WALLET` |
-| `sui` | `sources/sui.ts` | Sui coins + **Bluefin Spot LP (DeFi)** from on-chain objects | keyless RPC |
+| `sui` | `sources/sui.ts` | Sui spot coins (AlphaLend DeFi not valued yet) | keyless RPC |
 | `near` | `sources/near.ts` | Native NEAR + fungible tokens via FastNear + RPC metadata | keyless |
-| `static` | `sources/static.ts` | ЦФА Альфа (50 000 ₽ fixed) | hardcoded |
+| `hyperliquid` | `sources/hyperliquid.ts` | HyperCore **perps account equity + spot balances** | keyless (`HYPERLIQUID_WALLET`, default `EVM_WALLET_2`) |
+| `static` | `sources/static.ts` | ЦФА Альфа + **manual positions** (кубышка ВТБ, etc.) | local (file/env) |
 
 RUB→USD conversion uses the live CBR rate (`lib/usdRub.ts`), cached per invocation.
 
 ## DeFi coverage
 
-- **EVM DeFi** — Zerion returns `deposited`/`staked`/`borrowed` positions, tagged
-  `category: "defi"` with `protocol` and `apy` when available.
-- **Sui DeFi (Bluefin Spot)** — LP positions are on-chain objects, listed via
-  `suix_getOwnedObjects` filtered by the Bluefin `position::Position` type, then valued
-  from the pool's current sqrt price + tick range using concentrated-liquidity math
-  (`lib/clmm.ts`). This is a floating-point approximation, adequate for portfolio
-  valuation. If a single position can't be valued it's still listed (value 0 with a
-  note), never dropped.
+- **EVM DeFi** — Zerion returns `deposited`/`staked`/`borrowed` positions across all
+  chains (incl. Plasma), tagged `category: "defi"` with `protocol`/`apy` when available.
+  When Zerion can't price an asset (e.g. AAVE aTokens like `aPlaUSDT0`, which come back
+  with `value: null`), USD-stable positions are re-priced from quantity at ~$1 so they
+  aren't silently dropped (`stableUsd()` in `evm.ts`).
+- **Hyperliquid** — perps account equity (`clearinghouseState.marginSummary.accountValue`)
+  plus spot balances priced by token index from `spotMetaAndAssetCtxs` (spot token names
+  collide, so pricing is by index, against USD-stable-quoted pairs).
+- **Bybit Earn** — flexible savings / on-chain earn positions, priced via spot tickers.
+
+## Manual positions
+
+For holdings no API can reach (e.g. a VTB savings account / "кубышка"), declare them
+manually. Two sources, merged by `ticker` (env overrides file, which overrides built-in
+defaults like ЦФА Альфа):
+
+1. **`positions.local.json`** (project root, gitignored) — see
+   [`positions.local.example.json`](positions.local.example.json).
+2. **`MANUAL_POSITIONS`** env — a JSON array of the same shape.
+
+Each entry: `{ ticker, name, valueRub?|value?(USD), category?, currency?, description? }`.
+`valueRub` is converted to USD via the live CBR rate; `value` is used directly.
 
 ## Known limitations
 
-- **Bluefin perps** (margin/open perp positions) are **not** covered — there's no free,
-  keyless way to read them; it would require an authenticated trading key.
+- **Sui AlphaLend** position (the wallet's `…::position::PositionCap`) is **not valued
+  yet** — no free REST API; needs `@alphafi/alphalend-sdk` or on-chain + Pyth math. The
+  EGUSDC coin balance still shows under Sui.
+- **Hyperliquid:** spot tokens with no USD-stable-quoted pair are listed at `price: 0`.
+  Perps are reported as account equity (not per-position notional) to avoid double-count.
 - Sui/NEAR tokens with no CoinGecko mapping are listed at `price: 0` (visible, not
-  dropped). Extend the `COIN_COINGECKO` / `FT_COINGECKO` maps in the source files to add
-  more.
+  dropped). Extend the `COIN_COINGECKO` / `FT_COINGECKO` maps to add more.
 - CoinGecko free tier is rate-limited (~30 req/min) — fine for an on-demand single call.
 - Snapshot only: no historical P&L or cost basis.
 

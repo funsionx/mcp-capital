@@ -8,6 +8,7 @@ export type Source =
   | "solana"
   | "sui"
   | "near"
+  | "hyperliquid"
   | "static";
 
 /** Coarse source token accepted by the tool's `includeSources` filter. */
@@ -19,6 +20,7 @@ export type SourceFilter =
   | "solana"
   | "sui"
   | "near"
+  | "hyperliquid"
   | "static";
 
 export type Category =

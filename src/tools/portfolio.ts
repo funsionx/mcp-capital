@@ -10,6 +10,7 @@ import * as evm from "../sources/evm.ts";
 import * as solana from "../sources/solana.ts";
 import * as sui from "../sources/sui.ts";
 import * as near from "../sources/near.ts";
+import * as hyperliquid from "../sources/hyperliquid.ts";
 import * as staticSrc from "../sources/static.ts";
 
 const ALL_SOURCES = [
@@ -20,6 +21,7 @@ const ALL_SOURCES = [
   "solana",
   "sui",
   "near",
+  "hyperliquid",
   "static",
 ] as const;
 
@@ -31,6 +33,7 @@ const REGISTRY: Record<SourceFilter, FetchPositions> = {
   solana: solana.fetchPositions,
   sui: sui.fetchPositions,
   near: near.fetchPositions,
+  hyperliquid: hyperliquid.fetchPositions,
   static: staticSrc.fetchPositions,
 };
 
