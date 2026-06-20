@@ -1,16 +1,7 @@
 import type { PositionItem } from "../lib/types.ts";
-import { fetchJson, stringifyErr } from "../lib/http.ts";
-import { requireEnv } from "../lib/env.ts";
-import { isStableSymbol } from "../lib/stablecoins.ts";
+import { stringifyErr } from "../lib/http.ts";
+import { bybitSignedGet, bybitSpotPrice } from "../lib/bybit.ts";
 
-const HOST = "https://api.bybit.com";
-const RECV_WINDOW = "5000";
-
-interface BybitEnvelope<T> {
-  retCode: number;
-  retMsg: string;
-  result: T;
-}
 interface WalletBalance {
   list?: { coin?: BybitCoin[] }[];
 }
@@ -40,51 +31,15 @@ interface EarnPosition {
   totalPnl?: string;
   productId?: string;
 }
-interface TickerList {
-  list?: { symbol?: string; lastPrice?: string }[];
-}
-
 const EARN_CATEGORIES = ["FlexibleSaving", "OnChain"] as const;
 
 export async function fetchPositions(): Promise<PositionItem[]> {
-  const apiKey = requireEnv("BYBIT_API_KEY");
-  const apiSecret = requireEnv("BYBIT_API_SECRET");
-
-  const [wallet, positions, earn] = await Promise.all([
-    fetchWallet(apiKey, apiSecret),
-    fetchOpenPositions(apiKey, apiSecret),
-    fetchEarn(apiKey, apiSecret),
-  ]);
-
+  const [wallet, positions, earn] = await Promise.all([fetchWallet(), fetchOpenPositions(), fetchEarn()]);
   return [...wallet, ...positions, ...earn];
 }
 
-async function signedGet<T>(
-  apiKey: string,
-  apiSecret: string,
-  path: string,
-  query: string,
-): Promise<T> {
-  const timestamp = Date.now().toString();
-  const sign = await hmacSha256Hex(apiSecret, timestamp + apiKey + RECV_WINDOW + query);
-  const url = `${HOST}${path}${query ? `?${query}` : ""}`;
-  const res = await fetchJson<BybitEnvelope<T>>(url, {
-    headers: {
-      "X-BAPI-API-KEY": apiKey,
-      "X-BAPI-SIGN": sign,
-      "X-BAPI-TIMESTAMP": timestamp,
-      "X-BAPI-RECV-WINDOW": RECV_WINDOW,
-    },
-  });
-  if (res.retCode !== 0) {
-    throw new Error(`Bybit ${path} retCode=${res.retCode}: ${res.retMsg}`);
-  }
-  return res.result;
-}
-
-async function fetchWallet(apiKey: string, apiSecret: string): Promise<PositionItem[]> {
-  const query = "accountType=UNIFIED";
-  const result = await signedGet<WalletBalance>(apiKey, apiSecret, "/v5/account/wallet-balance", query);
+async function fetchWallet(): Promise<PositionItem[]> {
+  const result = await bybitSignedGet<WalletBalance>("/v5/account/wallet-balance", "accountType=UNIFIED");
   const coins = result.list?.[0]?.coin ?? [];
   const out: PositionItem[] = [];
   for (const c of coins) {
@@ -107,10 +62,9 @@ async function fetchWallet(apiKey: string, apiSecret: string): Promise<PositionI
   return out;
 }
 
-async function fetchOpenPositions(apiKey: string, apiSecret: string): Promise<PositionItem[]> {
+async function fetchOpenPositions(): Promise<PositionItem[]> {
   try {
-    const query = "category=linear&settleCoin=USDT";
-    const result = await signedGet<PositionList>(apiKey, apiSecret, "/v5/position/list", query);
+    const result = await bybitSignedGet<PositionList>("/v5/position/list", "category=linear&settleCoin=USDT");
     const out: PositionItem[] = [];
     for (const p of result.list ?? []) {
       const size = num(p.size);
@@ -138,17 +92,16 @@ async function fetchOpenPositions(apiKey: string, apiSecret: string): Promise<Po
   }
 }
 
-async function fetchEarn(apiKey: string, apiSecret: string): Promise<PositionItem[]> {
+async function fetchEarn(): Promise<PositionItem[]> {
   const out: PositionItem[] = [];
   for (const category of EARN_CATEGORIES) {
     try {
-      const query = `category=${category}`;
-      const result = await signedGet<EarnList>(apiKey, apiSecret, "/v5/earn/position", query);
+      const result = await bybitSignedGet<EarnList>("/v5/earn/position", `category=${category}`);
       for (const p of result.list ?? []) {
         const coin = p.coin ?? "";
         const quantity = num(p.amount);
         if (!coin || quantity <= 0) continue;
-        const price = await spotPrice(coin);
+        const price = await bybitSpotPrice(coin);
         out.push({
           source: "bybit",
           ticker: coin,
@@ -168,38 +121,6 @@ async function fetchEarn(apiKey: string, apiSecret: string): Promise<PositionIte
     }
   }
   return out;
-}
-
-const priceCache = new Map<string, number>();
-
-/** Public spot price coin->USD (via USDT pair). Stables resolve to 1. */
-async function spotPrice(coin: string): Promise<number> {
-  const up = coin.toUpperCase();
-  if (isStableSymbol(up)) return 1;
-  if (priceCache.has(up)) return priceCache.get(up)!;
-  try {
-    const res = await fetchJson<BybitEnvelope<TickerList>>(
-      `${HOST}/v5/market/tickers?category=spot&symbol=${up}USDT`,
-    );
-    const last = num(res.result?.list?.[0]?.lastPrice);
-    priceCache.set(up, last);
-    return last;
-  } catch {
-    priceCache.set(up, 0);
-    return 0;
-  }
-}
-
-async function hmacSha256Hex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function num(v: string | undefined): number {

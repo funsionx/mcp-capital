@@ -1,7 +1,7 @@
 import { fetchJson, stringifyErr } from "../lib/http.ts";
 import { requireEnv, optionalEnv } from "../lib/env.ts";
 import { insertAutoFlow, rejectInternalByHash } from "./store.ts";
-import { isStableSymbol } from "../lib/stablecoins.ts";
+import { bybitSignedGet, bybitSpotPrice } from "../lib/bybit.ts";
 import { TBANK_CA } from "../lib/tbankCa.ts";
 import { quotationToNumber, type Quotation } from "../lib/money.ts";
 import { getUsdRub } from "../lib/usdRub.ts";
@@ -133,31 +133,7 @@ interface BybitRow {
   txID?: string;
 }
 
-async function bybitSigned<T>(path: string, query: string): Promise<T> {
-  const key = requireEnv("BYBIT_API_KEY");
-  const secret = requireEnv("BYBIT_API_SECRET");
-  const ts = Date.now().toString();
-  const recv = "5000";
-  const sign = await hmacHex(secret, ts + key + recv + query);
-  const res = await fetchJson<{ retCode: number; retMsg: string; result: T }>(
-    `https://api.bybit.com${path}?${query}`,
-    { headers: { "X-BAPI-API-KEY": key, "X-BAPI-SIGN": sign, "X-BAPI-TIMESTAMP": ts, "X-BAPI-RECV-WINDOW": recv } },
-  );
-  if (res.retCode !== 0) throw new Error(`Bybit ${path} retCode=${res.retCode}: ${res.retMsg}`);
-  return res.result;
-}
-
-async function bybitUsd(coin: string, amount: number): Promise<number> {
-  if (isStableSymbol(coin)) return amount;
-  try {
-    const r = await fetchJson<{ result?: { list?: { lastPrice?: string }[] } }>(
-      `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${coin.toUpperCase()}USDT`,
-    );
-    return Number(r.result?.list?.[0]?.lastPrice ?? 0) * amount;
-  } catch {
-    return 0;
-  }
-}
+const bybitUsd = async (coin: string, amount: number) => (await bybitSpotPrice(coin)) * amount;
 
 /** External deposits/withdrawals on Bybit. Transfers to/from the user's own
  * on-chain addresses are internal and skipped (e.g. Bybit→EVM_1 withdrawal). */
@@ -170,7 +146,7 @@ export async function detectBybitFlows(
   let inserted = 0;
   const txIds: string[] = []; // all on-chain hashes seen — used to net the EVM legs
 
-  const deposits = await bybitSigned<{ rows?: BybitRow[] }>("/v5/asset/deposit/query-record", "limit=50");
+  const deposits = await bybitSignedGet<{ rows?: BybitRow[] }>("/v5/asset/deposit/query-record", "limit=50");
   for (const r of deposits.rows ?? []) {
     if (r.txID) txIds.push(r.txID);
     if (String(r.status) !== "3" || Number(r.successAt ?? 0) < minMs) continue;
@@ -191,7 +167,7 @@ export async function detectBybitFlows(
       inserted++;
   }
 
-  const withdrawals = await bybitSigned<{ rows?: BybitRow[] }>("/v5/asset/withdraw/query-record", "limit=50");
+  const withdrawals = await bybitSignedGet<{ rows?: BybitRow[] }>("/v5/asset/withdraw/query-record", "limit=50");
   for (const r of withdrawals.rows ?? []) {
     if (r.txID) txIds.push(r.txID);
     const t = Number(r.updateTime ?? r.createTime ?? 0);
@@ -297,16 +273,4 @@ export async function detectAllFlows(sinceDays = 90): Promise<Record<string, unk
   const bybitSummary = bybit && "txIds" in bybit ? { candidates: bybit.candidates, inserted: bybit.inserted } : bybit;
 
   return { evm, bybit: bybitSummary, tinkoff, nettedInternal };
-}
-
-async function hmacHex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
