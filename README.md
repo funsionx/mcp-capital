@@ -158,10 +158,14 @@ gitignored). Three extra tools:
 - **`get_returns`** `{ period? | from?, to? }` — return between two snapshots, net of
   flows, via **Modified Dietz** (deposits excluded from gain and time-weighted). Returns
   `gainUsd`, `returnPct`, `netFlowUsd`. Counts manual + **confirmed** flows only.
-- **`detect_flows`** `{ sinceDays? }` — scans EVM tx history (Zerion) and records external
-  flows as `pending`. **`list_flows`** / **`confirm_flow`** (`{id}` or `{all:true}`) /
-  **`reject_flow`** review them. Only `send`/`receive` to a non-own counterparty count;
-  swaps and DeFi deposits/withdrawals are skipped.
+- **`detect_flows`** `{ sinceDays? }` — scans **EVM** (Zerion tx history), **Bybit**
+  (deposit/withdraw records) and **T-Invest** (cash operations) for external flows,
+  recording them as `pending`. **`list_flows`** / **`confirm_flow`** (`{id}` or
+  `{all:true}`) / **`reject_flow`** review them. Internal moves are skipped where
+  determinable: EVM transfers to/from own addresses, Bybit withdrawals/deposits to/from
+  own addresses (e.g. a Bybit→EVM_1 withdrawal), swaps and DeFi deposits/withdrawals.
+  (The on-chain *other leg* of a CEX↔chain transfer can still surface as pending until
+  full both-leg reconciliation lands — reject it on review.)
 - **`list_manual_positions`** / **`upsert_manual_position`** / **`remove_manual_position`** —
   manage deposits/ЦФА/кубышка (stored in the `manual_positions` table; seeded once from
   `positions.local.json` / `MANUAL_POSITIONS` on first run).

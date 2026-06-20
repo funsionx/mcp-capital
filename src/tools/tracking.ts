@@ -17,7 +17,7 @@ import {
   type FlowStatus,
 } from "../portfolio/store.ts";
 import { computeReturn, periodStart, type Period } from "../portfolio/returns.ts";
-import { detectEvmFlows } from "../portfolio/detect.ts";
+import { detectAllFlows } from "../portfolio/detect.ts";
 import { ensureManualSeed } from "../sources/static.ts";
 
 const TRIGGERS = ["month_start", "month_end", "daily", "manual", "on_chat"] as const;
@@ -101,15 +101,16 @@ export function registerTrackingTools(server: McpServer): void {
     {
       title: "Detect Cash Flows",
       description:
-        "Scans EVM wallet transaction history (Zerion) for external deposits/withdrawals " +
-        "and records them as PENDING flows for review. Transfers between your own wallets " +
-        "are skipped; swaps and DeFi deposits/withdrawals are not flows. Confirm pending " +
-        "flows (some may be CEX withdrawals or staking rewards) before they count in returns.",
+        "Scans EVM wallets (Zerion), Bybit (deposit/withdraw records) and T-Invest " +
+        "(cash operations) for external deposits/withdrawals, recording them as PENDING " +
+        "flows for review. Transfers between your own accounts/addresses are skipped; " +
+        "swaps and DeFi deposits/withdrawals are not flows. Confirm pending flows (some " +
+        "may be CEX↔chain internal moves or staking rewards) before they count in returns.",
       inputSchema: {
         sinceDays: z.number().optional().describe("How far back to scan (default 90)."),
       },
     },
-    async ({ sinceDays }) => text(await detectEvmFlows(sinceDays ?? 90)),
+    async ({ sinceDays }) => text(await detectAllFlows(sinceDays ?? 90)),
   );
 
   server.registerTool(
