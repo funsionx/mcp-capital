@@ -1,41 +1,11 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PositionItem } from "../lib/types.ts";
-import { stringifyErr } from "../lib/http.ts";
-import { getUsdRub } from "../lib/usdRub.ts";
-import { computeAllocation, type Allocation } from "../lib/analytics.ts";
-import { sourceLabel, staticLabel } from "../lib/labels.ts";
-import { SOURCE_IDS, type SourceFilter, fetchFor } from "../sources/index.ts";
+import { SOURCE_IDS } from "../sources/index.ts";
+import { buildPortfolio, round } from "../portfolio/build.ts";
 
-/** Hard cap per source so one slow/hung API can't make the whole tool time out. */
-const SOURCE_TIMEOUT_MS = 18_000;
 /** Default: hide sub-$1 noise from the listing (still counted in totals). */
 const DEFAULT_MIN_VALUE_USD = 1;
-
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  let t: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    t = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
-  });
-  return Promise.race([p.finally(() => clearTimeout(t)), timeout]);
-}
-
-interface SourceBreakdownEntry {
-  label: string;
-  valueUsd: number;
-  positionCount: number;
-}
-interface Summary {
-  timestamp: string;
-  totalValueUsd: number;
-  totalValueRub: number;
-  positionCount: number;
-  sourceBreakdown: Record<string, SourceBreakdownEntry>;
-  allocation: Allocation;
-  positions: Record<string, unknown>[];
-  hiddenBelowThreshold: { count: number; valueUsd: number; minValueUsd: number };
-  errors: { source: string; error: string }[];
-}
 
 export function registerPortfolioTool(server: McpServer): void {
   server.registerTool(
@@ -64,77 +34,33 @@ export function registerPortfolioTool(server: McpServer): void {
     },
     async ({ includeSources, minValueUsd }) => {
       const threshold = minValueUsd ?? DEFAULT_MIN_VALUE_USD;
-      const selected: SourceFilter[] =
-        includeSources && includeSources.length > 0 ? includeSources : [...SOURCE_IDS];
+      const pf = await buildPortfolio(includeSources);
 
-      const settled = await Promise.allSettled(
-        selected.map((s) => withTimeout(fetchFor(s)(), SOURCE_TIMEOUT_MS, s)),
-      );
-
-      const positions: PositionItem[] = [];
-      const errors: { source: string; error: string }[] = [];
-      const sourceBreakdown: Record<string, SourceBreakdownEntry> = {};
-
-      settled.forEach((result, i) => {
-        const source = selected[i]!;
-        if (result.status === "fulfilled") {
-          for (const p of result.value) {
-            positions.push(p);
-            const entry = (sourceBreakdown[p.source] ??= { label: "", valueUsd: 0, positionCount: 0 });
-            entry.valueUsd += p.value || 0;
-            entry.positionCount += 1;
-          }
-        } else {
-          errors.push({ source, error: stringifyErr(result.reason) });
-        }
-      });
-
-      // Totals stay accurate over ALL positions; only the listing is trimmed.
-      const totalValueUsd = positions.reduce((s, p) => s + (p.value || 0), 0);
-      // Whole portfolio converted to RUB at the live CBR rate (not just the
-      // RUB-denominated subset). Falls back to summing RUB-native positions.
-      let totalValueRub: number;
-      try {
-        totalValueRub = totalValueUsd * (await getUsdRub());
-      } catch {
-        totalValueRub = positions.reduce((s, p) => s + (p.valueRub || 0), 0);
-      }
-      for (const k of Object.keys(sourceBreakdown)) {
-        const entry = sourceBreakdown[k]!;
-        entry.valueUsd = round(entry.valueUsd);
-        entry.label =
-          k === "static" ? staticLabel(positions.filter((p) => p.source === "static")) : sourceLabel(k as Parameters<typeof sourceLabel>[0]);
-      }
-
-      const shown = positions
+      const shown = pf.positions
         .filter((p) => Math.abs(p.value || 0) >= threshold)
         .sort((a, b) => (b.value || 0) - (a.value || 0));
-      const hidden = positions.filter((p) => Math.abs(p.value || 0) < threshold);
+      const hidden = pf.positions.filter((p) => Math.abs(p.value || 0) < threshold);
 
-      const summary: Summary = {
-        timestamp: new Date().toISOString(),
-        totalValueUsd: round(totalValueUsd),
-        totalValueRub: round(totalValueRub),
-        positionCount: positions.length,
-        sourceBreakdown,
-        allocation: computeAllocation(positions, totalValueUsd),
+      const summary = {
+        timestamp: pf.timestamp,
+        totalValueUsd: pf.totalValueUsd,
+        totalValueRub: pf.totalValueRub,
+        positionCount: pf.positionCount,
+        sourceBreakdown: pf.sourceBreakdown,
+        allocation: pf.allocation,
         positions: shown.map(compact),
         hiddenBelowThreshold: {
           count: hidden.length,
           valueUsd: round(hidden.reduce((s, p) => s + (p.value || 0), 0)),
           minValueUsd: threshold,
         },
-        errors,
+        errors: pf.errors,
       };
 
       // Compact (no indentation) to minimize tokens for the consuming agent.
       return { content: [{ type: "text", text: JSON.stringify(summary) }] };
     },
   );
-}
-
-function round(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 /** Trim a position for output: round numbers, drop empty/zero optional fields. */

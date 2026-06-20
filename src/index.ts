@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerPortfolioTool } from "./tools/portfolio.ts";
+import { registerTrackingTools } from "./tools/tracking.ts";
 import { startHttp } from "./server/http.ts";
 import { startStdio } from "./server/stdio.ts";
 
@@ -7,6 +8,7 @@ import { startStdio } from "./server/stdio.ts";
 function createServer(): McpServer {
   const server = new McpServer({ name: "portfolio-mcp", version: "1.0.0" });
   registerPortfolioTool(server);
+  registerTrackingTools(server);
   return server;
 }
 

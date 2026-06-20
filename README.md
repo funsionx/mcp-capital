@@ -144,6 +144,37 @@ transports live in `src/server/` and the entry point (`src/index.ts`) just wires
   pool with `get_account_total_balance` (e.g. `here.poolv1.near`), tagged `category:"defi"`.
 - **Bybit Earn** — flexible savings / on-chain earn positions, priced via spot tickers.
 
+## Return tracking (snapshots + flows)
+
+Stateful return tracking is stored in **SQLite** (`bun:sqlite`, file at `DB_PATH`,
+gitignored). Three extra tools:
+
+- **`snapshot_portfolio`** `{ trigger }` — builds the current portfolio and saves a
+  timestamped snapshot. `on_chat` is deduplicated to ≤1/hour; cron uses
+  `daily`/`month_start`/`month_end`; `manual` is user-forced.
+- **`record_flow`** `{ direction, amountUsd, source?, note?, ts? }` — logs an **external**
+  deposit/withdrawal (money entering/leaving the whole portfolio). Transfers between your
+  own tracked accounts are NOT flows.
+- **`get_returns`** `{ period? | from?, to? }` — return between two snapshots, net of
+  flows, via **Modified Dietz** (deposits excluded from gain and time-weighted). Returns
+  `gainUsd`, `returnPct`, `netFlowUsd`.
+
+The data shape: `snapshots(ts, trigger, total_usd, total_rub, breakdown_json,
+allocation_json, positions_json)` and `flows(ts, direction, amount_usd, source, note,
+auto)`. `buildPortfolio()` in `src/portfolio/build.ts` is shared by the live tool and the
+snapshot writer.
+
+**Flows: external vs internal.** A flow is money crossing the *boundary* of the tracked
+portfolio. Salary landing on a wallet = external inflow (a flow). Moving funds between
+your own EVM_1 ↔ Bybit = internal (nets to zero, not a flow). Today flows are entered
+manually; auto-detection (classifying transfers by whether the counterparty is one of
+your own addresses) is the planned next step — see the chat notes.
+
+**Deploying publicly:** set `AUTH_TOKEN` (the server otherwise exposes your full net
+worth), put it behind HTTPS (Caddy auto-TLS or a Cloudflare Tunnel), and drive the cron
+triggers with systemd timers hitting `snapshot_portfolio`. SQLite needs no server; a 1GB
+VPS is plenty.
+
 ## Source display names
 
 `sourceBreakdown[*].label` carries a human-friendly name per source (e.g. `tinkoff` →

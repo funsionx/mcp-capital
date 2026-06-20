@@ -1,0 +1,114 @@
+import { getDb } from "../lib/db.ts";
+import { buildPortfolio } from "./build.ts";
+
+export type Trigger = "month_start" | "month_end" | "daily" | "manual" | "on_chat";
+export type FlowDirection = "deposit" | "withdraw";
+
+export interface SnapshotRow {
+  id: number;
+  ts: string;
+  trigger: string;
+  total_usd: number;
+  total_rub: number;
+}
+export interface FlowRow {
+  id: number;
+  ts: string;
+  direction: FlowDirection;
+  amount_usd: number;
+  source: string | null;
+  note: string | null;
+  auto: number;
+}
+
+const DEDUP_MS = 60 * 60 * 1000; // on_chat: at most one snapshot per hour
+
+export interface WriteResult {
+  saved: boolean;
+  reason?: string;
+  id?: number;
+  ts: string;
+  totalUsd?: number;
+  totalRub?: number;
+}
+
+/** Build the current portfolio and persist it as a snapshot (with on_chat dedup). */
+export async function writeSnapshot(trigger: Trigger): Promise<WriteResult> {
+  const db = getDb();
+
+  if (trigger === "on_chat") {
+    const last = db.query("SELECT ts FROM snapshots ORDER BY ts DESC LIMIT 1").get() as { ts: string } | null;
+    if (last && Date.now() - Date.parse(last.ts) < DEDUP_MS) {
+      return { saved: false, reason: "deduplicated (a snapshot was taken < 1h ago)", ts: last.ts };
+    }
+  }
+
+  const pf = await buildPortfolio();
+  const row = db
+    .query(
+      `INSERT INTO snapshots (ts, trigger, total_usd, total_rub, breakdown_json, allocation_json, positions_json)
+       VALUES ($ts, $trigger, $usd, $rub, $bd, $al, $pos) RETURNING id`,
+    )
+    .get({
+      $ts: pf.timestamp,
+      $trigger: trigger,
+      $usd: pf.totalValueUsd,
+      $rub: pf.totalValueRub,
+      $bd: JSON.stringify(pf.sourceBreakdown),
+      $al: JSON.stringify(pf.allocation),
+      $pos: JSON.stringify(pf.positions),
+    }) as { id: number };
+
+  return { saved: true, id: row.id, ts: pf.timestamp, totalUsd: pf.totalValueUsd, totalRub: pf.totalValueRub };
+}
+
+/** Most recent snapshot at or before `ts` (ISO). */
+export function snapshotAtOrBefore(ts: string): SnapshotRow | null {
+  return getDb()
+    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots WHERE ts <= $ts ORDER BY ts DESC LIMIT 1")
+    .get({ $ts: ts }) as SnapshotRow | null;
+}
+
+/** First snapshot at or after `ts` (ISO) — the start anchor for a period. */
+export function snapshotAtOrAfter(ts: string): SnapshotRow | null {
+  return getDb()
+    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots WHERE ts >= $ts ORDER BY ts ASC LIMIT 1")
+    .get({ $ts: ts }) as SnapshotRow | null;
+}
+
+export function latestSnapshot(): SnapshotRow | null {
+  return getDb()
+    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots ORDER BY ts DESC LIMIT 1")
+    .get() as SnapshotRow | null;
+}
+
+export function recordFlow(f: {
+  direction: FlowDirection;
+  amountUsd: number;
+  source?: string;
+  note?: string;
+  ts?: string;
+  auto?: boolean;
+}): number {
+  const row = getDb()
+    .query(
+      `INSERT INTO flows (ts, direction, amount_usd, source, note, auto)
+       VALUES ($ts, $dir, $amt, $src, $note, $auto) RETURNING id`,
+    )
+    .get({
+      $ts: f.ts ?? new Date().toISOString(),
+      $dir: f.direction,
+      $amt: Math.abs(f.amountUsd),
+      $src: f.source ?? null,
+      $note: f.note ?? null,
+      $auto: f.auto ? 1 : 0,
+    }) as { id: number };
+  return row.id;
+}
+
+/** Flows strictly after `fromTs` and at/before `toTs`. */
+export function flowsBetween(fromTs: string, toTs: string): FlowRow[] {
+  return getDb()
+    .query("SELECT * FROM flows WHERE ts > $from AND ts <= $to ORDER BY ts ASC")
+    .all({ $from: fromTs, $to: toTs }) as FlowRow[];
+}

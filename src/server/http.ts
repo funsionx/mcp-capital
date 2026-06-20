@@ -9,6 +9,16 @@ function isMcpPath(pathname: string): boolean {
   return pathname === MCP_PATH || pathname === `${MCP_PATH}/`;
 }
 
+/**
+ * Bearer-token gate. No-op unless AUTH_TOKEN is set — but you MUST set it before
+ * exposing this server publicly (it reveals your entire net worth).
+ */
+function authorized(req: Request): boolean {
+  const token = process.env.AUTH_TOKEN;
+  if (!token) return true;
+  return req.headers.get("authorization") === `Bearer ${token}`;
+}
+
 function corsHeaders(req: Request): Record<string, string> {
   const configured = (process.env.ALLOWED_ORIGINS ?? "*")
     .split(",")
@@ -56,6 +66,16 @@ export function startHttp(createServer: CreateServer, port: number, hostname: st
 
       if (req.method === "OPTIONS" && isMcpPath(url.pathname)) {
         return new Response(null, { status: 204, headers: corsHeaders(req) });
+      }
+
+      if (isMcpPath(url.pathname) && !authorized(req)) {
+        return withCors(
+          req,
+          Response.json(
+            { jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null },
+            { status: 401 },
+          ),
+        );
       }
 
       if (isMcpPath(url.pathname)) {
