@@ -14,7 +14,7 @@ interface SpotState {
 }
 // spotMetaAndAssetCtxs returns [meta, ctxs]
 interface SpotMeta {
-  tokens?: { name?: string; index?: number }[];
+  tokens?: { name?: string; index?: number; isCanonical?: boolean }[];
   universe?: { tokens?: [number, number]; index?: number }[];
 }
 type SpotAssetCtx = { midPx?: string | null; dayNtlVlm?: string };
@@ -110,20 +110,21 @@ async function fetchPerps(wallet: string): Promise<PositionItem[]> {
 }
 
 async function fetchSpot(wallet: string): Promise<PositionItem[]> {
-  const [state, prices] = await Promise.all([
+  const [state, info] = await Promise.all([
     post<SpotState>({ type: "spotClearinghouseState", user: wallet }),
-    spotPrices(),
+    spotInfo(),
   ]);
 
   const out: PositionItem[] = [];
   for (const b of state.balances ?? []) {
     const coin = b.coin ?? "";
     const quantity = Number(b.total ?? "0");
-    if (!coin || quantity <= 0) continue;
-    // Price by token index (spot names collide); stables resolve to 1.
-    const price = isStableSymbol(coin)
-      ? 1
-      : (b.token != null ? prices.get(b.token) : undefined) ?? 0;
+    if (!coin || quantity <= 0 || b.token == null) continue;
+    // Only Hyperliquid-vetted (canonical) tokens. Non-canonical entries are
+    // user-deployed junk/airdropped memecoins (e.g. "MAX") whose quoted mid is
+    // unreliable and produces phantom valuations — drop them entirely.
+    if (!info.canonical.has(b.token)) continue;
+    const price = isStableSymbol(coin) ? 1 : info.prices.get(b.token) ?? 0;
     out.push({
       source: "hyperliquid",
       ticker: coin,
@@ -140,16 +141,16 @@ async function fetchSpot(wallet: string): Promise<PositionItem[]> {
   return out;
 }
 
-/** Build token-index -> USD mid price from spot pairs quoted in a USD stable. */
-async function spotPrices(): Promise<Map<number, number>> {
-  const map = new Map<number, number>();
+/** Canonical token set + token-index -> USD mid price (from USD-stable pairs). */
+async function spotInfo(): Promise<{ prices: Map<number, number>; canonical: Set<number> }> {
+  const prices = new Map<number, number>();
+  const canonical = new Set<number>();
   try {
     const [meta, ctxs] = await post<[SpotMeta, SpotAssetCtx[]]>({ type: "spotMetaAndAssetCtxs" });
     const tokens = meta.tokens ?? [];
+    for (const t of tokens) if (t.isCanonical && t.index != null) canonical.add(t.index);
     const usdcIndex = tokens.find((t) => (t.name ?? "").toUpperCase() === "USDC")?.index;
-    const stableIdx = new Set(
-      tokens.filter((t) => isStableSymbol(t.name)).map((t) => t.index),
-    );
+    const stableIdx = new Set(tokens.filter((t) => isStableSymbol(t.name)).map((t) => t.index));
     const universe = meta.universe ?? [];
     const consider = (preferUsdc: boolean) =>
       universe.forEach((pair, i) => {
@@ -161,13 +162,13 @@ async function spotPrices(): Promise<Map<number, number>> {
         const px = Number(mid);
         if (!Number.isFinite(px) || px <= 0) return;
         const quoteOk = preferUsdc ? quoteIdx === usdcIndex : stableIdx.has(quoteIdx);
-        if (!quoteOk || map.has(baseIdx)) return;
-        map.set(baseIdx, px); // quote is a ~$1 stable, so mid ≈ USD price
+        if (!quoteOk || prices.has(baseIdx)) return;
+        prices.set(baseIdx, px); // quote is a ~$1 stable, so mid ≈ USD price
       });
     consider(true); // prefer USDC-quoted
     consider(false); // fall back to other stable-quoted pairs
   } catch {
-    // Pricing best-effort; balances still listed (possibly at price 0).
+    // Best-effort; on failure nothing is canonical -> spot tokens are skipped.
   }
-  return map;
+  return { prices, canonical };
 }
