@@ -1,6 +1,6 @@
 import { fetchJson, stringifyErr } from "../lib/http.ts";
 import { requireEnv, optionalEnv } from "../lib/env.ts";
-import { insertAutoFlow } from "./store.ts";
+import { insertAutoFlow, rejectInternalByHash } from "./store.ts";
 import { isStableSymbol } from "../lib/stablecoins.ts";
 import { TBANK_CA } from "../lib/tbankCa.ts";
 import { quotationToNumber, type Quotation } from "../lib/money.ts";
@@ -14,6 +14,7 @@ interface ZerionTx {
   attributes?: {
     operation_type?: string;
     mined_at?: string;
+    hash?: string;
     transfers?: {
       direction?: string; // "in" | "out"
       value?: number | null;
@@ -106,6 +107,7 @@ export async function detectEvmFlows(sinceDays = 90): Promise<{
           source: src,
           note: `${a.operation_type} ${t.fungible_info?.symbol ?? "?"} ${counterparty.slice(0, 10)}…`,
           extId: `${tx.id}:${i}`,
+          txHash: a.hash,
         });
         if (ok) inserted++;
       });
@@ -159,14 +161,18 @@ async function bybitUsd(coin: string, amount: number): Promise<number> {
 
 /** External deposits/withdrawals on Bybit. Transfers to/from the user's own
  * on-chain addresses are internal and skipped (e.g. Bybit→EVM_1 withdrawal). */
-export async function detectBybitFlows(sinceDays = 90): Promise<{ candidates: number; inserted: number }> {
+export async function detectBybitFlows(
+  sinceDays = 90,
+): Promise<{ candidates: number; inserted: number; txIds: string[] }> {
   const own = ownAddresses();
   const minMs = Date.now() - sinceDays * 86_400_000;
   let candidates = 0;
   let inserted = 0;
+  const txIds: string[] = []; // all on-chain hashes seen — used to net the EVM legs
 
   const deposits = await bybitSigned<{ rows?: BybitRow[] }>("/v5/asset/deposit/query-record", "limit=50");
   for (const r of deposits.rows ?? []) {
+    if (r.txID) txIds.push(r.txID);
     if (String(r.status) !== "3" || Number(r.successAt ?? 0) < minMs) continue;
     if ((r.fromAddress ?? "").toLowerCase() && own.has((r.fromAddress ?? "").toLowerCase())) continue;
     const usd = await bybitUsd(r.coin ?? "", Number(r.amount ?? 0));
@@ -187,6 +193,7 @@ export async function detectBybitFlows(sinceDays = 90): Promise<{ candidates: nu
 
   const withdrawals = await bybitSigned<{ rows?: BybitRow[] }>("/v5/asset/withdraw/query-record", "limit=50");
   for (const r of withdrawals.rows ?? []) {
+    if (r.txID) txIds.push(r.txID);
     const t = Number(r.updateTime ?? r.createTime ?? 0);
     if (r.status !== "success" || t < minMs) continue;
     if ((r.toAddress ?? "").toLowerCase() && own.has((r.toAddress ?? "").toLowerCase())) continue; // internal
@@ -206,7 +213,7 @@ export async function detectBybitFlows(sinceDays = 90): Promise<{ candidates: nu
       inserted++;
   }
 
-  return { candidates, inserted };
+  return { candidates, inserted, txIds };
 }
 
 // ── T-Invest cash operations (пополнение / вывод) ───────────────────────────
@@ -270,20 +277,26 @@ export async function detectTinkoffFlows(sinceDays = 90): Promise<{ candidates: 
   return { candidates, inserted };
 }
 
-/** Run every flow detector; each failure is isolated. */
+/** Run every flow detector, then net the EVM legs of CEX↔chain transfers. */
 export async function detectAllFlows(sinceDays = 90): Promise<Record<string, unknown>> {
-  const run = async (fn: () => Promise<unknown>) => {
+  const run = async <T>(fn: () => Promise<T>): Promise<T | { error: string }> => {
     try {
       return await fn();
     } catch (e) {
       return { error: stringifyErr(e) };
     }
   };
-  return {
-    evm: await run(() => detectEvmFlows(sinceDays)),
-    bybit: await run(() => detectBybitFlows(sinceDays)),
-    tinkoff: await run(() => detectTinkoffFlows(sinceDays)),
-  };
+
+  const evm = await run(() => detectEvmFlows(sinceDays));
+  const bybit = await run(() => detectBybitFlows(sinceDays));
+  const tinkoff = await run(() => detectTinkoffFlows(sinceDays));
+
+  // Reject EVM pending flows that are the on-chain leg of a Bybit transfer.
+  const bybitTxIds = bybit && "txIds" in bybit ? bybit.txIds : [];
+  const nettedInternal = rejectInternalByHash(bybitTxIds);
+  const bybitSummary = bybit && "txIds" in bybit ? { candidates: bybit.candidates, inserted: bybit.inserted } : bybit;
+
+  return { evm, bybit: bybitSummary, tinkoff, nettedInternal };
 }
 
 async function hmacHex(secret: string, message: string): Promise<string> {

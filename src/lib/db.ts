@@ -38,7 +38,8 @@ export function getDb(): Database {
       note        TEXT,
       auto        INTEGER NOT NULL DEFAULT 0,   -- 0 = manual, 1 = auto-detected
       status      TEXT    NOT NULL DEFAULT 'confirmed', -- 'confirmed' | 'pending' | 'rejected'
-      ext_id      TEXT                          -- stable external id (tx hash:idx) for dedup
+      ext_id      TEXT,                         -- stable external id (tx id:idx) for dedup
+      tx_hash     TEXT                          -- on-chain hash, for CEX↔chain netting
     );
     CREATE INDEX IF NOT EXISTS idx_flows_ts ON flows(ts);
 
@@ -64,6 +65,7 @@ export function getDb(): Database {
   for (const stmt of [
     "ALTER TABLE flows ADD COLUMN status TEXT NOT NULL DEFAULT 'confirmed'",
     "ALTER TABLE flows ADD COLUMN ext_id TEXT",
+    "ALTER TABLE flows ADD COLUMN tx_hash TEXT", // on-chain hash, for CEX↔chain netting
   ]) {
     try {
       db.exec(stmt);

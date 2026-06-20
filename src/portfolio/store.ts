@@ -124,11 +124,12 @@ export function insertAutoFlow(f: {
   source?: string;
   note?: string;
   extId: string;
+  txHash?: string;
 }): boolean {
   const r = getDb()
     .query(
-      `INSERT OR IGNORE INTO flows (ts, direction, amount_usd, source, note, auto, status, ext_id)
-       VALUES ($ts, $dir, $amt, $src, $note, 1, 'pending', $ext)`,
+      `INSERT OR IGNORE INTO flows (ts, direction, amount_usd, source, note, auto, status, ext_id, tx_hash)
+       VALUES ($ts, $dir, $amt, $src, $note, 1, 'pending', $ext, $hash)`,
     )
     .run({
       $ts: f.ts,
@@ -137,8 +138,32 @@ export function insertAutoFlow(f: {
       $src: f.source ?? null,
       $note: f.note ?? null,
       $ext: f.extId,
+      $hash: f.txHash ?? null,
     });
   return r.changes > 0;
+}
+
+/**
+ * Reject pending flows whose on-chain hash matches one of `hashes` — the EVM leg of
+ * a CEX↔chain transfer the exchange already accounts for (e.g. a Bybit→EVM_1
+ * withdrawal seen on both sides). Nets both legs to zero.
+ */
+export function rejectInternalByHash(hashes: string[]): number {
+  if (hashes.length === 0) return 0;
+  const set = new Set(hashes.map((h) => h.toLowerCase()));
+  const db = getDb();
+  const pending = db
+    .query("SELECT id, tx_hash FROM flows WHERE status = 'pending' AND tx_hash IS NOT NULL")
+    .all() as { id: number; tx_hash: string }[];
+  let n = 0;
+  for (const f of pending) {
+    if (!set.has(f.tx_hash.toLowerCase())) continue;
+    db.query("UPDATE flows SET status = 'rejected', note = note || ' [auto: internal CEX↔chain]' WHERE id = $id").run({
+      $id: f.id,
+    });
+    n++;
+  }
+  return n;
 }
 
 export function listFlows(status?: FlowStatus, limit = 50): FlowRow[] {

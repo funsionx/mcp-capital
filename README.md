@@ -161,11 +161,11 @@ gitignored). Three extra tools:
 - **`detect_flows`** `{ sinceDays? }` — scans **EVM** (Zerion tx history), **Bybit**
   (deposit/withdraw records) and **T-Invest** (cash operations) for external flows,
   recording them as `pending`. **`list_flows`** / **`confirm_flow`** (`{id}` or
-  `{all:true}`) / **`reject_flow`** review them. Internal moves are skipped where
-  determinable: EVM transfers to/from own addresses, Bybit withdrawals/deposits to/from
-  own addresses (e.g. a Bybit→EVM_1 withdrawal), swaps and DeFi deposits/withdrawals.
-  (The on-chain *other leg* of a CEX↔chain transfer can still surface as pending until
-  full both-leg reconciliation lands — reject it on review.)
+  `{all:true}`) / **`reject_flow`** review them. Internal moves are skipped/netted: EVM
+  transfers to/from own addresses, Bybit withdrawals/deposits to/from own addresses,
+  swaps and DeFi deposits/withdrawals. **Both legs of a CEX↔chain transfer reconcile
+  automatically** — an EVM leg whose on-chain hash matches a Bybit `txID` is auto-rejected
+  (`nettedInternal` in the result).
 - **`list_manual_positions`** / **`upsert_manual_position`** / **`remove_manual_position`** —
   manage deposits/ЦФА/кубышка (stored in the `manual_positions` table; seeded once from
   `positions.local.json` / `MANUAL_POSITIONS` on first run).
