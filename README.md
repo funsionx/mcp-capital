@@ -177,10 +177,18 @@ your own EVM_1 ↔ Bybit = internal (nets to zero, not a flow). Today flows are 
 manually; auto-detection (classifying transfers by whether the counterparty is one of
 your own addresses) is the planned next step — see the chat notes.
 
-**Deploying publicly:** set `AUTH_TOKEN` (the server otherwise exposes your full net
-worth), put it behind HTTPS (Caddy auto-TLS or a Cloudflare Tunnel), and drive the cron
-triggers with systemd timers hitting `snapshot_portfolio`. SQLite needs no server; a 1GB
-VPS is plenty.
+**Auth (set at least one before exposing publicly — it reveals your net worth):**
+- **Static bearer** — set `AUTH_TOKEN`; clients send `Authorization: Bearer <token>`
+  (Perplexity, manual clients).
+- **OAuth 2.1** — set `OAUTH_CLIENT_ID` + `OAUTH_CLIENT_SECRET` (and `OAUTH_ISSUER` when
+  behind ngrok/a proxy). A minimal single-user Authorization Server (auth code + PKCE +
+  refresh) is served at `/.well-known/oauth-*`, `/authorize`, `/token`, `/register` in
+  [`src/server/oauth.ts`](src/server/oauth.ts). Paste the client id/secret into clients
+  that require OAuth (e.g. Claude). Both schemes work simultaneously; `/mcp` accepts
+  either a valid OAuth access token or the static bearer.
+
+**Deploying:** behind HTTPS (Caddy auto-TLS or a Cloudflare Tunnel), drive cron triggers
+with systemd timers hitting `snapshot_portfolio`. SQLite needs no server; a 1GB VPS is plenty.
 
 ## Source display names
 

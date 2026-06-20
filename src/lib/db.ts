@@ -42,6 +42,12 @@ export function getDb(): Database {
     );
     CREATE INDEX IF NOT EXISTS idx_flows_ts ON flows(ts);
 
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      token      TEXT PRIMARY KEY,
+      type       TEXT NOT NULL,   -- 'access' | 'refresh'
+      expires_at INTEGER          -- epoch ms; NULL = no expiry
+    );
+
     CREATE TABLE IF NOT EXISTS manual_positions (
       ticker      TEXT PRIMARY KEY,
       name        TEXT NOT NULL,
