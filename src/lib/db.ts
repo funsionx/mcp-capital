@@ -32,13 +32,39 @@ export function getDb(): Database {
     CREATE TABLE IF NOT EXISTS flows (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       ts          TEXT    NOT NULL,
-      direction   TEXT    NOT NULL,           -- 'deposit' | 'withdraw'
-      amount_usd  REAL    NOT NULL,           -- always positive; sign comes from direction
-      source      TEXT,                       -- which account it hit (optional)
+      direction   TEXT    NOT NULL,             -- 'deposit' | 'withdraw'
+      amount_usd  REAL    NOT NULL,             -- always positive; sign comes from direction
+      source      TEXT,                         -- which account it hit (optional)
       note        TEXT,
-      auto        INTEGER NOT NULL DEFAULT 0  -- 0 = manual, 1 = auto-detected
+      auto        INTEGER NOT NULL DEFAULT 0,   -- 0 = manual, 1 = auto-detected
+      status      TEXT    NOT NULL DEFAULT 'confirmed', -- 'confirmed' | 'pending' | 'rejected'
+      ext_id      TEXT                          -- stable external id (tx hash:idx) for dedup
     );
     CREATE INDEX IF NOT EXISTS idx_flows_ts ON flows(ts);
+
+    CREATE TABLE IF NOT EXISTS manual_positions (
+      ticker      TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      value_usd   REAL,                         -- one of value_usd / value_rub
+      value_rub   REAL,
+      category    TEXT,
+      currency    TEXT,
+      description TEXT,
+      updated_at  TEXT NOT NULL
+    );
   `);
+
+  // Migrate older DBs that predate these columns (ALTER is a no-op if present).
+  for (const stmt of [
+    "ALTER TABLE flows ADD COLUMN status TEXT NOT NULL DEFAULT 'confirmed'",
+    "ALTER TABLE flows ADD COLUMN ext_id TEXT",
+  ]) {
+    try {
+      db.exec(stmt);
+    } catch {
+      /* column already exists */
+    }
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_flows_extid ON flows(ext_id) WHERE ext_id IS NOT NULL");
   return db;
 }

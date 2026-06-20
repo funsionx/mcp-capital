@@ -157,7 +157,14 @@ gitignored). Three extra tools:
   own tracked accounts are NOT flows.
 - **`get_returns`** `{ period? | from?, to? }` — return between two snapshots, net of
   flows, via **Modified Dietz** (deposits excluded from gain and time-weighted). Returns
-  `gainUsd`, `returnPct`, `netFlowUsd`.
+  `gainUsd`, `returnPct`, `netFlowUsd`. Counts manual + **confirmed** flows only.
+- **`detect_flows`** `{ sinceDays? }` — scans EVM tx history (Zerion) and records external
+  flows as `pending`. **`list_flows`** / **`confirm_flow`** (`{id}` or `{all:true}`) /
+  **`reject_flow`** review them. Only `send`/`receive` to a non-own counterparty count;
+  swaps and DeFi deposits/withdrawals are skipped.
+- **`list_manual_positions`** / **`upsert_manual_position`** / **`remove_manual_position`** —
+  manage deposits/ЦФА/кубышка (stored in the `manual_positions` table; seeded once from
+  `positions.local.json` / `MANUAL_POSITIONS` on first run).
 
 The data shape: `snapshots(ts, trigger, total_usd, total_rub, breakdown_json,
 allocation_json, positions_json)` and `flows(ts, direction, amount_usd, source, note,

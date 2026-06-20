@@ -7,12 +7,22 @@ import {
   latestSnapshot,
   snapshotAtOrBefore,
   snapshotAtOrAfter,
+  listFlows,
+  setFlowStatus,
+  confirmAllPending,
+  listManualPositions,
+  upsertManualPosition,
+  removeManualPosition,
   type Trigger,
+  type FlowStatus,
 } from "../portfolio/store.ts";
 import { computeReturn, periodStart, type Period } from "../portfolio/returns.ts";
+import { detectEvmFlows } from "../portfolio/detect.ts";
+import { ensureManualSeed } from "../sources/static.ts";
 
 const TRIGGERS = ["month_start", "month_end", "daily", "manual", "on_chat"] as const;
 const PERIODS = ["today", "7d", "30d", "mtd", "ytd", "all"] as const;
+const CATEGORIES = ["stock", "bond", "crypto", "etf", "defi", "mmf", "cfa"] as const;
 
 const text = (obj: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(obj) }] });
 
@@ -82,6 +92,114 @@ export function registerTrackingTools(server: McpServer): void {
 
       const flows = flowsBetween(start.ts, end.ts);
       return text({ period: from ? "custom" : period ?? "30d", ...computeReturn(start, end, flows) });
+    },
+  );
+
+  // ── Flow auto-detection + review ──────────────────────────────────────────
+  server.registerTool(
+    "detect_flows",
+    {
+      title: "Detect Cash Flows",
+      description:
+        "Scans EVM wallet transaction history (Zerion) for external deposits/withdrawals " +
+        "and records them as PENDING flows for review. Transfers between your own wallets " +
+        "are skipped; swaps and DeFi deposits/withdrawals are not flows. Confirm pending " +
+        "flows (some may be CEX withdrawals or staking rewards) before they count in returns.",
+      inputSchema: {
+        sinceDays: z.number().optional().describe("How far back to scan (default 90)."),
+      },
+    },
+    async ({ sinceDays }) => text(await detectEvmFlows(sinceDays ?? 90)),
+  );
+
+  server.registerTool(
+    "list_flows",
+    {
+      title: "List Cash Flows",
+      description: "Lists recorded flows for review. Defaults to pending (auto-detected, awaiting confirmation).",
+      inputSchema: {
+        status: z.enum(["confirmed", "pending", "rejected"]).optional().describe("Filter by status (default: pending)."),
+        limit: z.number().optional().describe("Max rows (default 50)."),
+      },
+    },
+    async ({ status, limit }) => text({ flows: listFlows((status as FlowStatus) ?? "pending", limit ?? 50) }),
+  );
+
+  server.registerTool(
+    "confirm_flow",
+    {
+      title: "Confirm Pending Flow(s)",
+      description: "Marks a pending flow as confirmed so it counts in returns. Pass id, or all=true to confirm every pending flow.",
+      inputSchema: {
+        id: z.number().optional().describe("Flow id to confirm."),
+        all: z.boolean().optional().describe("Confirm all pending flows."),
+      },
+    },
+    async ({ id, all }) => {
+      if (all) return text({ confirmed: confirmAllPending() });
+      if (id == null) return text({ error: "Provide id or all=true." });
+      return text({ confirmed: setFlowStatus(id, "confirmed") });
+    },
+  );
+
+  server.registerTool(
+    "reject_flow",
+    {
+      title: "Reject Flow",
+      description: "Marks a flow as rejected (e.g. an internal transfer or reward mis-detected) so it never counts.",
+      inputSchema: { id: z.number().describe("Flow id to reject.") },
+    },
+    async ({ id }) => text({ rejected: setFlowStatus(id, "rejected") }),
+  );
+
+  // ── Manual positions (deposits, ЦФА, кубышка) ─────────────────────────────
+  server.registerTool(
+    "list_manual_positions",
+    {
+      title: "List Manual Positions",
+      description: "Lists the manually-tracked positions (deposits, ЦФА, savings) stored in the DB.",
+      inputSchema: {},
+    },
+    async () => {
+      await ensureManualSeed();
+      return text({ positions: listManualPositions() });
+    },
+  );
+
+  server.registerTool(
+    "upsert_manual_position",
+    {
+      title: "Add/Update Manual Position",
+      description:
+        "Creates or updates a manual position by ticker (deposits, ЦФА, кубышка — anything no API can reach). " +
+        "Provide valueRub (converted to USD via the CBR rate) or value (USD).",
+      inputSchema: {
+        ticker: z.string().describe("Unique id, e.g. 'VTB_KUBYSHKA'."),
+        name: z.string().describe("Display name, e.g. 'Кубышка ВТБ'."),
+        valueRub: z.number().optional().describe("Value in RUB."),
+        value: z.number().optional().describe("Value in USD (if not RUB)."),
+        category: z.enum(CATEGORIES).optional().describe("Asset class (default mmf)."),
+        currency: z.string().optional(),
+        description: z.string().optional(),
+      },
+    },
+    async ({ ticker, name, valueRub, value, category, currency, description }) => {
+      await ensureManualSeed(); // migrate file/env positions before mutating
+      upsertManualPosition({ ticker, name, valueRub, valueUsd: value, category, currency, description });
+      return text({ ok: true, ticker });
+    },
+  );
+
+  server.registerTool(
+    "remove_manual_position",
+    {
+      title: "Remove Manual Position",
+      description: "Deletes a manual position by ticker.",
+      inputSchema: { ticker: z.string().describe("Ticker to remove.") },
+    },
+    async ({ ticker }) => {
+      await ensureManualSeed();
+      return text({ removed: removeManualPosition(ticker) });
     },
   );
 }

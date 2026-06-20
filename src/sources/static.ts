@@ -2,15 +2,21 @@ import type { Category, PositionItem } from "../lib/types.ts";
 import { getUsdRub } from "../lib/usdRub.ts";
 import { optionalEnv } from "../lib/env.ts";
 import { stringifyErr } from "../lib/http.ts";
+import {
+  countManualPositions,
+  listManualPositions,
+  upsertManualPosition,
+  type ManualPositionRow,
+} from "../portfolio/store.ts";
 
 /**
  * Static / manually-tracked positions that can't be pulled from any API
- * (e.g. ЦФА Альфа, a VTB savings account / "кубышка", off-exchange holdings).
+ * (ЦФА Альфа, a VTB savings account / "кубышка", off-exchange deposits).
  *
- * Sources, merged by ticker (later overrides earlier):
- *   1. built-in DEFAULTS below
- *   2. positions.local.json at the project root (gitignored)
- *   3. MANUAL_POSITIONS env var (JSON array)
+ * Source of truth is the `manual_positions` DB table, managed via the
+ * upsert/remove/list tools. On first run (empty table) it is seeded once from
+ * `positions.local.json` and the `MANUAL_POSITIONS` env var, so existing setups
+ * migrate automatically. Cash flows into these are logged via `record_flow`.
  *
  * Each entry: { ticker, name, valueRub? | value?(USD), category?, currency?, description? }
  */
@@ -28,9 +34,37 @@ interface ManualInput {
 }
 
 export async function fetchPositions(): Promise<PositionItem[]> {
-  const merged = mergeByTicker([await fromFile(), fromEnv()]);
+  await ensureManualSeed();
   const usdRub = await getUsdRub();
-  return merged.map((m) => toPosition(m, usdRub));
+  return listManualPositions().map((row) => toPosition(rowToInput(row), usdRub));
+}
+
+/** One-time migration of file/env positions into the DB. Idempotent. */
+export async function ensureManualSeed(): Promise<void> {
+  if (countManualPositions() > 0) return;
+  for (const m of mergeByTicker([await fromFile(), fromEnv()])) {
+    upsertManualPosition({
+      ticker: m.ticker,
+      name: m.name,
+      valueUsd: m.value,
+      valueRub: m.valueRub,
+      category: m.category,
+      currency: m.currency,
+      description: m.description,
+    });
+  }
+}
+
+function rowToInput(r: ManualPositionRow): ManualInput {
+  return {
+    ticker: r.ticker,
+    name: r.name,
+    category: (r.category ?? undefined) as Category | undefined,
+    currency: r.currency ?? undefined,
+    valueRub: r.value_rub ?? undefined,
+    value: r.value_usd ?? undefined,
+    description: r.description ?? undefined,
+  };
 }
 
 function toPosition(m: ManualInput, usdRub: number): PositionItem {
