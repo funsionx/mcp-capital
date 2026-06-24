@@ -1,4 +1,4 @@
-import { writeSnapshot, type Trigger } from "../portfolio/store.ts";
+import { writeSnapshotResilient, type Trigger } from "../portfolio/store.ts";
 import { detectAllFlows } from "../portfolio/detect.ts";
 import { runDbMaintenance } from "../lib/maintenance.ts";
 import { resetUsdRubCache } from "../lib/usdRub.ts";
@@ -80,7 +80,7 @@ function releaseJobCaches(): void {
 
 async function runSnapshot(trigger: Trigger): Promise<void> {
   try {
-    const result = await writeSnapshot(trigger);
+    const result = await writeSnapshotResilient(trigger);
     console.error(`[cron] snapshot ${trigger}:`, JSON.stringify(result));
   } finally {
     releaseJobCaches();
@@ -101,6 +101,10 @@ async function runDetect(): Promise<void> {
 function buildJobs(): Job[] {
   const snap = snapshotTime();
   const det = detectTime();
+  // The scheduler runs one job at a time; if month boundaries shared daily's exact
+  // minute, daily would win and the month job's slot would already be in the past.
+  // Offset the month jobs by a minute so both fire (Date.UTC normalizes any overflow).
+  const monthMinute = snap.minute + 1;
 
   return [
     {
@@ -110,12 +114,12 @@ function buildJobs(): Job[] {
     },
     {
       name: "month_start",
-      next: (now) => nextMonthStart(now, snap.hour, snap.minute),
+      next: (now) => nextMonthStart(now, snap.hour, monthMinute),
       run: () => runSnapshot("month_start"),
     },
     {
       name: "month_end",
-      next: (now) => nextMonthEnd(now, snap.hour, snap.minute),
+      next: (now) => nextMonthEnd(now, snap.hour, monthMinute),
       run: () => runSnapshot("month_end"),
     },
     {

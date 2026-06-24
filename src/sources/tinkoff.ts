@@ -54,16 +54,26 @@ export async function fetchPositions(): Promise<PositionItem[]> {
   const usdRub = await getUsdRub();
 
   // One account failing (e.g. a DFA smart-account that has no standard portfolio)
-  // must not drop the others.
+  // must not drop the others — but if EVERY account fails (e.g. the T-Invest API is
+  // geo-blocked from this host), surface it as an error instead of a silent empty $0.
   const perAccount = await Promise.all(
     accounts.map((acc) =>
-      fetchAccountPortfolio(headers, acc, usdRub).catch((e) => {
-        console.error(`[tinkoff] account ${acc.id} (${acc.name ?? "?"}) failed: ${stringifyErr(e)}`);
-        return [] as PositionItem[];
-      }),
+      fetchAccountPortfolio(headers, acc, usdRub).then(
+        (items) => ({ ok: true as const, items }),
+        (e) => {
+          console.error(`[tinkoff] account ${acc.id} (${acc.name ?? "?"}) failed: ${stringifyErr(e)}`);
+          return { ok: false as const, error: stringifyErr(e) };
+        },
+      ),
     ),
   );
-  return perAccount.flat();
+
+  const ok = perAccount.filter((r): r is { ok: true; items: PositionItem[] } => r.ok);
+  if (ok.length === 0) {
+    const firstErr = perAccount.find((r) => !r.ok) as { ok: false; error: string } | undefined;
+    throw new Error(`Tinkoff: all ${accounts.length} account(s) failed — ${firstErr?.error ?? "unknown error"}`);
+  }
+  return ok.flatMap((r) => r.items);
 }
 
 /** Use explicit ids from env (comma-separated) if provided, else auto-discover. */

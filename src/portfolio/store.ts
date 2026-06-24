@@ -1,5 +1,5 @@
 import { getDb } from "../lib/db.ts";
-import { buildPortfolio } from "./build.ts";
+import { buildPortfolio, type Portfolio } from "./build.ts";
 
 export type Trigger = "month_start" | "month_end" | "daily" | "manual" | "on_chat";
 export type FlowDirection = "deposit" | "withdraw";
@@ -10,6 +10,9 @@ export interface SnapshotRow {
   trigger: string;
   total_usd: number;
   total_rub: number;
+  /** 1 when ≥1 source still failed after retries; such rows are skipped as return/PnL anchors. */
+  partial?: number;
+  failed_sources?: string | null;
 }
 export type FlowStatus = "confirmed" | "pending" | "rejected";
 export interface FlowRow {
@@ -33,6 +36,30 @@ export interface WriteResult {
   ts: string;
   totalUsd?: number;
   totalRub?: number;
+  /** True when the persisted snapshot is missing one or more sources (see failedSources). */
+  partial?: boolean;
+  failedSources?: string[];
+}
+
+/** Insert one assembled portfolio as a snapshot row. The single INSERT both writers share. */
+function persistSnapshot(pf: Portfolio, trigger: Trigger, partial: boolean, failedSources: string | null): number {
+  const row = getDb()
+    .query(
+      `INSERT INTO snapshots (ts, trigger, total_usd, total_rub, breakdown_json, allocation_json, positions_json, partial, failed_sources)
+       VALUES ($ts, $trigger, $usd, $rub, $bd, $al, $pos, $partial, $failed) RETURNING id`,
+    )
+    .get({
+      $ts: pf.timestamp,
+      $trigger: trigger,
+      $usd: pf.totalValueUsd,
+      $rub: pf.totalValueRub,
+      $bd: JSON.stringify(pf.sourceBreakdown),
+      $al: JSON.stringify(pf.allocation),
+      $pos: JSON.stringify(pf.positions),
+      $partial: partial ? 1 : 0,
+      $failed: failedSources,
+    }) as { id: number };
+  return row.id;
 }
 
 /** Build the current portfolio and persist it as a snapshot (with on_chat dedup). */
@@ -47,41 +74,67 @@ export async function writeSnapshot(trigger: Trigger): Promise<WriteResult> {
   }
 
   const pf = await buildPortfolio();
-  const row = db
-    .query(
-      `INSERT INTO snapshots (ts, trigger, total_usd, total_rub, breakdown_json, allocation_json, positions_json)
-       VALUES ($ts, $trigger, $usd, $rub, $bd, $al, $pos) RETURNING id`,
-    )
-    .get({
-      $ts: pf.timestamp,
-      $trigger: trigger,
-      $usd: pf.totalValueUsd,
-      $rub: pf.totalValueRub,
-      $bd: JSON.stringify(pf.sourceBreakdown),
-      $al: JSON.stringify(pf.allocation),
-      $pos: JSON.stringify(pf.positions),
-    }) as { id: number };
-
-  return { saved: true, id: row.id, ts: pf.timestamp, totalUsd: pf.totalValueUsd, totalRub: pf.totalValueRub };
+  const id = persistSnapshot(pf, trigger, false, null);
+  return { saved: true, id, ts: pf.timestamp, totalUsd: pf.totalValueUsd, totalRub: pf.totalValueRub };
 }
 
-/** Most recent snapshot at or before `ts` (ISO). */
+const DEFAULT_SNAPSHOT_RETRIES = 2;
+const DEFAULT_SNAPSHOT_RETRY_MS = 5 * 60 * 1000; // 5 minutes between attempts
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Cron-grade snapshot writer: if any source fails, rebuild up to `retries` more times
+ * (default 2, 5 min apart), keeping the most complete portfolio seen. Any source still
+ * failing after the last attempt is recorded in `failed_sources` and the row is flagged
+ * `partial=1` so return/PnL anchors skip it (a degraded total never poisons performance).
+ *
+ * A full rebuild per attempt (not just the failed source) keeps each snapshot internally
+ * consistent — all values come from the same point in time, never Frankenstein-merged.
+ */
+export async function writeSnapshotResilient(
+  trigger: Trigger,
+  opts?: { retries?: number; retryDelayMs?: number },
+): Promise<WriteResult> {
+  const retries = opts?.retries ?? DEFAULT_SNAPSHOT_RETRIES;
+  const delayMs = opts?.retryDelayMs ?? DEFAULT_SNAPSHOT_RETRY_MS;
+
+  let best = await buildPortfolio();
+  for (let attempt = 1; attempt <= retries && best.errors.length > 0; attempt++) {
+    console.error(
+      `[snapshot] ${trigger}: ${best.errors.length} source(s) failed (${best.errors
+        .map((e) => e.source)
+        .join(", ")}); retry ${attempt}/${retries} in ${Math.round(delayMs / 1000)}s`,
+    );
+    await sleep(delayMs);
+    const next = await buildPortfolio();
+    if (next.errors.length < best.errors.length) best = next; // keep the most complete result
+  }
+
+  const failed = [...new Set(best.errors.map((e) => e.source))];
+  const partial = failed.length > 0;
+  const id = persistSnapshot(best, trigger, partial, partial ? failed.join(",") : null);
+  if (partial) console.error(`[snapshot] ${trigger}: persisted PARTIAL snapshot, missing: ${failed.join(", ")}`);
+  return { saved: true, id, ts: best.timestamp, totalUsd: best.totalValueUsd, totalRub: best.totalValueRub, partial, failedSources: failed };
+}
+
+/** Most recent complete snapshot at or before `ts` (ISO). Partial snapshots are skipped. */
 export function snapshotAtOrBefore(ts: string): SnapshotRow | null {
   return getDb()
-    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots WHERE ts <= $ts ORDER BY ts DESC LIMIT 1")
+    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots WHERE ts <= $ts AND partial = 0 ORDER BY ts DESC LIMIT 1")
     .get({ $ts: ts }) as SnapshotRow | null;
 }
 
-/** First snapshot at or after `ts` (ISO) — the start anchor for a period. */
+/** First complete snapshot at or after `ts` (ISO) — the start anchor for a period. */
 export function snapshotAtOrAfter(ts: string): SnapshotRow | null {
   return getDb()
-    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots WHERE ts >= $ts ORDER BY ts ASC LIMIT 1")
+    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots WHERE ts >= $ts AND partial = 0 ORDER BY ts ASC LIMIT 1")
     .get({ $ts: ts }) as SnapshotRow | null;
 }
 
 export function latestSnapshot(): SnapshotRow | null {
   return getDb()
-    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots ORDER BY ts DESC LIMIT 1")
+    .query("SELECT id, ts, trigger, total_usd, total_rub FROM snapshots WHERE partial = 0 ORDER BY ts DESC LIMIT 1")
     .get() as SnapshotRow | null;
 }
 

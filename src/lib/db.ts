@@ -25,7 +25,9 @@ export function getDb(): Database {
       total_rub       REAL    NOT NULL,
       breakdown_json  TEXT    NOT NULL,
       allocation_json TEXT    NOT NULL,
-      positions_json  TEXT    NOT NULL
+      positions_json  TEXT    NOT NULL,
+      partial         INTEGER NOT NULL DEFAULT 0,   -- 1 = ≥1 source still failed after retries
+      failed_sources  TEXT                          -- CSV of sources missing from this snapshot
     );
     CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
 
@@ -66,6 +68,8 @@ export function getDb(): Database {
     "ALTER TABLE flows ADD COLUMN status TEXT NOT NULL DEFAULT 'confirmed'",
     "ALTER TABLE flows ADD COLUMN ext_id TEXT",
     "ALTER TABLE flows ADD COLUMN tx_hash TEXT", // on-chain hash, for CEX↔chain netting
+    "ALTER TABLE snapshots ADD COLUMN partial INTEGER NOT NULL DEFAULT 0", // degraded snapshot marker
+    "ALTER TABLE snapshots ADD COLUMN failed_sources TEXT",
   ]) {
     try {
       db.exec(stmt);

@@ -3,11 +3,13 @@ import { fetchJson } from "../lib/http.ts";
 import { getUsdRub } from "../lib/usdRub.ts";
 
 const QUANTITY = 182;
+// AKMM trades on board TQBR (it migrated off the old TQTF ETF board, which now returns
+// zero rows — that was the real cause of "no marketdata row").
 const URL =
-  "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQTF/securities/AKMM.json" +
+  "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/AKMM.json" +
   "?iss.meta=off&iss.only=securities,marketdata" +
-  "&securities.columns=SECID,SHORTNAME,SECNAME,DECIMALS" +
-  "&marketdata.columns=SECID,LAST,LCURRENTPRICE";
+  "&securities.columns=SECID,SHORTNAME,SECNAME,DECIMALS,PREVPRICE,PREVLEGALCLOSEPRICE" +
+  "&marketdata.columns=SECID,LAST,LCURRENTPRICE,LCLOSEPRICE";
 
 interface IssBlock {
   columns: string[];
@@ -28,13 +30,20 @@ function col(block: IssBlock, row: (string | number | null)[], name: string): st
 export async function fetchPositions(): Promise<PositionItem[]> {
   const res = await fetchJson<IssResponse>(URL);
 
+  // Live price during the trading session …
   const mdRow = res.marketdata?.data?.[0];
-  if (!mdRow) throw new Error("MOEX ISS: no marketdata row for AKMM");
+  const last = mdRow ? toNum(col(res.marketdata, mdRow, "LAST")) : null;
+  const lcp = mdRow ? toNum(col(res.marketdata, mdRow, "LCURRENTPRICE")) : null;
+  const lclose = mdRow ? toNum(col(res.marketdata, mdRow, "LCLOSEPRICE")) : null;
 
-  const last = toNum(col(res.marketdata, mdRow, "LAST"));
-  const lcp = toNum(col(res.marketdata, mdRow, "LCURRENTPRICE"));
-  const priceRub = last ?? lcp;
-  if (priceRub == null) throw new Error("MOEX ISS: AKMM price (LAST/LCURRENTPRICE) unavailable");
+  // … else fall back to the previous close from the securities block, so AKMM does
+  // not vanish from the portfolio every night and weekend when MOEX is closed.
+  const secRow = res.securities?.data?.[0];
+  const prevPrice = secRow ? toNum(col(res.securities, secRow, "PREVPRICE")) : null;
+  const prevLegal = secRow ? toNum(col(res.securities, secRow, "PREVLEGALCLOSEPRICE")) : null;
+
+  const priceRub = last ?? lcp ?? lclose ?? prevPrice ?? prevLegal;
+  if (priceRub == null) throw new Error("MOEX ISS: AKMM price unavailable (no live or previous-close quote)");
 
   const usdRub = await getUsdRub();
   const valueRub = QUANTITY * priceRub;
