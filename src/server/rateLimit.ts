@@ -32,6 +32,10 @@ export function rateLimit(req: Request, bucket: "mcp" | "oauth", defaultLimit: n
   const now = Date.now();
   const windowMs = 60_000;
 
+  for (const [k, entry] of buckets) {
+    if (now >= entry.resetAt) buckets.delete(k);
+  }
+
   let entry = buckets.get(key);
   if (!entry || now >= entry.resetAt) {
     entry = { count: 0, resetAt: now + windowMs };

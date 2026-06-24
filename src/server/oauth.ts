@@ -24,6 +24,23 @@ interface AuthCode {
 }
 const codes = new Map<string, AuthCode>();
 
+function purgeExpiredAuthCodes(): number {
+  const now = Date.now();
+  let n = 0;
+  for (const [code, entry] of codes) {
+    if (entry.expiresAt < now) {
+      codes.delete(code);
+      n++;
+    }
+  }
+  return n;
+}
+
+/** Exported for periodic maintenance (app HTTP process). */
+export function purgeOAuthAuthCodes(): number {
+  return purgeExpiredAuthCodes();
+}
+
 export function oauthEnabled(): boolean {
   return !!(process.env.OAUTH_CLIENT_ID && process.env.OAUTH_CLIENT_SECRET);
 }

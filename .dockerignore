@@ -1,0 +1,14 @@
+node_modules
+.git
+.gitignore
+data
+*.db
+*.db-*
+*.db-journal
+.env
+positions.local.json
+image
+.cursor
+docs
+*.md
+!README.md

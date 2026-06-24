@@ -6,6 +6,7 @@
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
     "start:stdio": "bun run src/index.ts -- --stdio",
+    "cron": "bun run src/cron/index.ts",
     "typecheck": "tsc --noEmit",
     "test:all-sources": "bun run scripts/all-sources.ts",
     "test:smoke": "bun run scripts/smoke.ts",

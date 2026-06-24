@@ -1,0 +1,57 @@
+# portfolio-mcp — MCP HTTP server + background cron scheduler.
+# Shared SQLite volume: both services use DB_PATH=/data/portfolio.db
+#
+# Usage:
+#   cp .env.example .env   # fill AUTH_TOKEN + source keys
+#   docker compose up -d --build
+#
+# Optional: bind-mount manual positions file (create it first):
+#   volumes on app/cron: - ./positions.local.json:/app/positions.local.json:ro
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        BUN_IMAGE: oven/bun:1-alpine
+    init: true
+    container_name: portfolio-mcp
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DB_PATH: /data/portfolio.db
+    volumes:
+      - pfdata:/data
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  cron:
+    build:
+      context: .
+      args:
+        BUN_IMAGE: oven/bun:1-alpine
+    init: true
+    stop_grace_period: 120s
+    container_name: portfolio-mcp-cron
+    command: ["bun", "run", "src/cron/index.ts"]
+    env_file: .env
+    environment:
+      DB_PATH: /data/portfolio.db
+    volumes:
+      - pfdata:/data
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pfdata:
+    name: portfolio-mcp-data

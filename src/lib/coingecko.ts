@@ -3,6 +3,12 @@ import { fetchJson } from "./http.ts";
 const BASE = "https://api.coingecko.com/api/v3/simple/price";
 
 const cache = new Map<string, number>();
+const MAX_CACHE = 512;
+
+/** Clear in-process price cache (cron post-job cleanup). */
+export function clearCoinGeckoCache(): void {
+  cache.clear();
+}
 
 /**
  * Free, keyless CoinGecko simple/price lookup. Returns a map of
@@ -16,7 +22,10 @@ export async function getCoinGeckoPrices(ids: string[]): Promise<Map<string, num
     const data = await fetchJson<Record<string, { usd?: number }>>(url, {}, { retries: 2 });
     for (const id of need) {
       const usd = data[id]?.usd;
-      if (typeof usd === "number") cache.set(id, usd);
+      if (typeof usd === "number") {
+        if (cache.size >= MAX_CACHE) cache.clear();
+        cache.set(id, usd);
+      }
     }
   }
   const out = new Map<string, number>();

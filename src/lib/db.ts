@@ -75,9 +75,8 @@ export function getDb(): Database {
   }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_flows_extid ON flows(ext_id) WHERE ext_id IS NOT NULL");
 
-  db.query("DELETE FROM oauth_tokens WHERE expires_at IS NOT NULL AND expires_at < $now").run({
-    $now: Date.now(),
-  });
+  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA cache_size = -8000"); // ~8 MB page cache cap
 
   try {
     chmodSync(DB_PATH, 0o600);

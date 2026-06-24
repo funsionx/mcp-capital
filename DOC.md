@@ -308,7 +308,38 @@ Auth отсутствует by design. Граница безопасности �
 | **Production VPS** | Bun за reverse proxy (Caddy/nginx) + TLS + auth       |
 | **Tunnel**         | ngrok → stateless `/mcp`, `OAUTH_ISSUER` = public URL |
 
-### Установка
+### Docker Compose (рекомендуется)
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+| Сервис | Назначение |
+|--------|------------|
+| **app** | MCP HTTP-сервер (`127.0.0.1:3000` → контейнер `0.0.0.0:3000`) |
+| **cron** | Планировщик: snapshots (`daily`, `month_start`, `month_end`) + `detect_flows` |
+| **volume `pfdata`** | SQLite `/data/portfolio.db` — общий для обоих сервисов |
+
+Образ: `oven/bun:1-alpine` (stable Bun 1.x на Alpine). После каждого cron-job — очистка in-process кэшей и `PRAGMA wal_checkpoint`; каждые 6 ч — purge expired OAuth tokens.
+
+Переменные cron (UTC):
+
+| Переменная | Default | Описание |
+|------------|---------|----------|
+| `CRON_SNAPSHOT_HOUR_UTC` | `0` | Час snapshots |
+| `CRON_SNAPSHOT_MINUTE_UTC` | `10` | Минута snapshots |
+| `CRON_DETECT_HOUR_UTC` | `1` | Час detect_flows |
+| `CRON_DETECT_MINUTE_UTC` | `0` | Минута detect_flows |
+| `CRON_DETECT_DAYS` | `90` | Глубина сканирования |
+
+Локально без Docker: `bun run cron` (тот же планировщик, без HTTP).
+
+Опционально смонтируйте `positions.local.json` в оба сервиса (см. комментарии в `docker-compose.yml`).
+
+Healthcheck: `GET /health`. TLS — на внешнем reverse proxy (Caddy/nginx).
+
+### Установка без Docker
 
 ```bash
 curl -fsSL https://bun.sh/install | bash

@@ -2,7 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerPortfolioTool } from "./tools/portfolio.ts";
 import { registerTrackingTools } from "./tools/tracking.ts";
 import { requireHttpAuth } from "./server/auth.ts";
-import { requireOAuthConfig } from "./server/oauth.ts";
+import { requireOAuthConfig, oauthEnabled, purgeOAuthAuthCodes } from "./server/oauth.ts";
+import { runDbMaintenance } from "./lib/maintenance.ts";
 import { startHttp } from "./server/http.ts";
 import { startStdio } from "./server/stdio.ts";
 
@@ -29,6 +30,20 @@ async function main(): Promise<void> {
     throw new Error(`Invalid PORT: ${process.env.PORT ?? "3000"}`);
   }
   startHttp(createServer, port, process.env.HOST ?? "127.0.0.1");
+  startMaintenanceLoop();
+}
+
+/** Periodic purge of expired OAuth tokens/codes and WAL checkpoint (HTTP process). */
+function startMaintenanceLoop(): void {
+  const tick = (): void => {
+    runDbMaintenance();
+    if (oauthEnabled()) {
+      const n = purgeOAuthAuthCodes();
+      if (n > 0) console.error(`[maintenance] purged ${n} expired oauth auth code(s)`);
+    }
+  };
+  tick();
+  setInterval(tick, 6 * 60 * 60 * 1000);
 }
 
 main().catch((err) => {
