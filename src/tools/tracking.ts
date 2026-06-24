@@ -23,6 +23,8 @@ import { ensureManualSeed } from "../sources/static.ts";
 const TRIGGERS = ["month_start", "month_end", "daily", "manual", "on_chat"] as const;
 const PERIODS = ["today", "7d", "30d", "mtd", "ytd", "all"] as const;
 const CATEGORIES = ["stock", "bond", "crypto", "etf", "defi", "mmf", "cfa"] as const;
+const NOTE = z.string().max(2000);
+const ISO = z.string().max(64);
 
 const text = (obj: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(obj) }] });
 
@@ -54,10 +56,10 @@ export function registerTrackingTools(server: McpServer): void {
         "are excluded from investment return so the number reflects performance, not deposits.",
       inputSchema: {
         direction: z.enum(["deposit", "withdraw"]).describe("deposit = money in, withdraw = money out"),
-        amountUsd: z.number().positive().describe("Amount in USD (positive)."),
-        source: z.string().optional().describe("Which account it hit, e.g. 'evm_1', 'bybit'."),
-        note: z.string().optional().describe("Free-text note, e.g. 'salary' or 'sold car'."),
-        ts: z.string().optional().describe("ISO-8601 time of the flow; defaults to now."),
+        amountUsd: z.number().positive().max(1e12).describe("Amount in USD (positive)."),
+        source: NOTE.optional().describe("Which account it hit, e.g. 'evm_1', 'bybit'."),
+        note: NOTE.optional().describe("Free-text note, e.g. 'salary' or 'sold car'."),
+        ts: ISO.optional().describe("ISO-8601 time of the flow; defaults to now."),
       },
     },
     async ({ direction, amountUsd, source, note, ts }) => {
@@ -76,8 +78,8 @@ export function registerTrackingTools(server: McpServer): void {
         "return %. Requires at least two snapshots in range (see snapshot_portfolio).",
       inputSchema: {
         period: z.enum(PERIODS).optional().describe("Preset window (default 30d). Ignored if `from` is set."),
-        from: z.string().optional().describe("Custom start ISO-8601 (overrides period)."),
-        to: z.string().optional().describe("Custom end ISO-8601 (defaults to latest snapshot)."),
+        from: ISO.optional().describe("Custom start ISO-8601 (overrides period)."),
+        to: ISO.optional().describe("Custom end ISO-8601 (defaults to latest snapshot)."),
       },
     },
     async ({ period, from, to }) => {
@@ -107,7 +109,7 @@ export function registerTrackingTools(server: McpServer): void {
         "swaps and DeFi deposits/withdrawals are not flows. Confirm pending flows (some " +
         "may be CEX↔chain internal moves or staking rewards) before they count in returns.",
       inputSchema: {
-        sinceDays: z.number().optional().describe("How far back to scan (default 90)."),
+        sinceDays: z.number().int().min(1).max(365).optional().describe("How far back to scan (default 90)."),
       },
     },
     async ({ sinceDays }) => text(await detectAllFlows(sinceDays ?? 90)),
@@ -120,7 +122,7 @@ export function registerTrackingTools(server: McpServer): void {
       description: "Lists recorded flows for review. Defaults to pending (auto-detected, awaiting confirmation).",
       inputSchema: {
         status: z.enum(["confirmed", "pending", "rejected"]).optional().describe("Filter by status (default: pending)."),
-        limit: z.number().optional().describe("Max rows (default 50)."),
+        limit: z.number().int().min(1).max(500).optional().describe("Max rows (default 50)."),
       },
     },
     async ({ status, limit }) => text({ flows: listFlows((status as FlowStatus) ?? "pending", limit ?? 50) }),
@@ -132,7 +134,7 @@ export function registerTrackingTools(server: McpServer): void {
       title: "Confirm Pending Flow(s)",
       description: "Marks a pending flow as confirmed so it counts in returns. Pass id, or all=true to confirm every pending flow.",
       inputSchema: {
-        id: z.number().optional().describe("Flow id to confirm."),
+        id: z.number().int().positive().optional().describe("Flow id to confirm."),
         all: z.boolean().optional().describe("Confirm all pending flows."),
       },
     },
@@ -148,7 +150,7 @@ export function registerTrackingTools(server: McpServer): void {
     {
       title: "Reject Flow",
       description: "Marks a flow as rejected (e.g. an internal transfer or reward mis-detected) so it never counts.",
-      inputSchema: { id: z.number().describe("Flow id to reject.") },
+      inputSchema: { id: z.number().int().positive().describe("Flow id to reject.") },
     },
     async ({ id }) => text({ rejected: setFlowStatus(id, "rejected") }),
   );
@@ -175,13 +177,13 @@ export function registerTrackingTools(server: McpServer): void {
         "Creates or updates a manual position by ticker (deposits, ЦФА, кубышка — anything no API can reach). " +
         "Provide valueRub (converted to USD via the CBR rate) or value (USD).",
       inputSchema: {
-        ticker: z.string().describe("Unique id, e.g. 'VTB_KUBYSHKA'."),
-        name: z.string().describe("Display name, e.g. 'Кубышка ВТБ'."),
-        valueRub: z.number().optional().describe("Value in RUB."),
-        value: z.number().optional().describe("Value in USD (if not RUB)."),
+        ticker: z.string().max(128).describe("Unique id, e.g. 'VTB_KUBYSHKA'."),
+        name: z.string().max(512).describe("Display name, e.g. 'Кубышка ВТБ'."),
+        valueRub: z.number().min(0).max(1e12).optional().describe("Value in RUB."),
+        value: z.number().min(0).max(1e12).optional().describe("Value in USD (if not RUB)."),
         category: z.enum(CATEGORIES).optional().describe("Asset class (default mmf)."),
-        currency: z.string().optional(),
-        description: z.string().optional(),
+        currency: z.string().max(16).optional(),
+        description: NOTE.optional(),
       },
     },
     async ({ ticker, name, valueRub, value, category, currency, description }) => {
@@ -196,7 +198,7 @@ export function registerTrackingTools(server: McpServer): void {
     {
       title: "Remove Manual Position",
       description: "Deletes a manual position by ticker.",
-      inputSchema: { ticker: z.string().describe("Ticker to remove.") },
+      inputSchema: { ticker: z.string().max(128).describe("Ticker to remove.") },
     },
     async ({ ticker }) => {
       await ensureManualSeed();

@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { bearerMatches } from "./auth.ts";
 import { oauthEnabled, isOAuthPath, handleOAuth, validateAccessToken } from "./oauth.ts";
+import { rateLimit } from "./rateLimit.ts";
 
 const MCP_PATH = "/mcp";
 
@@ -16,12 +18,10 @@ function isMcpPath(pathname: string): boolean {
  * configure one before exposing this server publicly (it reveals your net worth).
  */
 function authorized(req: Request): boolean {
-  const staticToken = process.env.AUTH_TOKEN;
-  if (!staticToken && !oauthEnabled()) return true;
-
+  const staticToken = process.env.AUTH_TOKEN?.trim();
   const header = req.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-  if (staticToken && bearer === staticToken) return true;
+  if (staticToken && bearerMatches(staticToken, bearer)) return true;
   if (oauthEnabled() && bearer && validateAccessToken(bearer)) return true;
   return false;
 }
@@ -77,8 +77,15 @@ export function startHttp(createServer: CreateServer, port: number, hostname: st
 
       // OAuth endpoints are public (no bearer gate) when OAuth is enabled.
       if (oauthEnabled() && isOAuthPath(url.pathname)) {
+        const limited = rateLimit(req, "oauth", 20);
+        if (limited) return withCors(req, limited);
         const res = await handleOAuth(req);
         if (res) return withCors(req, res);
+      }
+
+      if (isMcpPath(url.pathname)) {
+        const limited = rateLimit(req, "mcp", 30);
+        if (limited) return withCors(req, limited);
       }
 
       if (isMcpPath(url.pathname) && !authorized(req)) {

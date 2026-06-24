@@ -1,0 +1,16 @@
+[
+  {
+    "ticker": "VTB_KUBYSHKA",
+    "name": "Кубышка ВТБ",
+    "valueRub": 500000,
+    "category": "mmf",
+    "description": "Накопительный счёт ВТБ"
+  },
+  {
+    "ticker": "ALFA_CFA",
+    "name": "ЦФА Альфа",
+    "valueRub": 100000,
+    "category": "cfa",
+    "description": "Цифровые финансовые активы"
+  }
+]

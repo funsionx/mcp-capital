@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 const DB_PATH = process.env.DB_PATH ?? "./data/portfolio.db";
@@ -74,5 +74,16 @@ export function getDb(): Database {
     }
   }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_flows_extid ON flows(ext_id) WHERE ext_id IS NOT NULL");
+
+  db.query("DELETE FROM oauth_tokens WHERE expires_at IS NOT NULL AND expires_at < $now").run({
+    $now: Date.now(),
+  });
+
+  try {
+    chmodSync(DB_PATH, 0o600);
+  } catch {
+    /* best-effort on platforms that support it */
+  }
+
   return db;
 }

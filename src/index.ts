@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerPortfolioTool } from "./tools/portfolio.ts";
 import { registerTrackingTools } from "./tools/tracking.ts";
+import { requireHttpAuth } from "./server/auth.ts";
+import { requireOAuthConfig } from "./server/oauth.ts";
 import { startHttp } from "./server/http.ts";
 import { startStdio } from "./server/stdio.ts";
 
@@ -18,6 +20,9 @@ async function main(): Promise<void> {
     await startStdio(createServer);
     return;
   }
+
+  requireHttpAuth();
+  requireOAuthConfig();
 
   const port = Number(process.env.PORT ?? "3000");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {

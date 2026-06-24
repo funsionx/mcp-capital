@@ -8,6 +8,7 @@
     "start:stdio": "bun run src/index.ts -- --stdio",
     "typecheck": "tsc --noEmit",
     "test:all-sources": "bun run scripts/all-sources.ts",
+    "test:smoke": "bun run scripts/smoke.ts",
     "inspector": "bunx @modelcontextprotocol/inspector bun src/index.ts --stdio"
   },
   "dependencies": {
