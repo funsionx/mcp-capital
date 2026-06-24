@@ -1,12 +1,18 @@
 # portfolio-mcp — MCP HTTP server + background cron scheduler.
 # Shared SQLite volume: both services use DB_PATH=/data/portfolio.db
 #
+# Traefik: app joins external network `proxy-net` (same as your Traefik container).
+# Set TRAEFIK_HOST (+ OAUTH_ISSUER=https://<host>) in .env before `docker compose up`.
+#
 # Usage:
-#   cp .env.example .env   # fill AUTH_TOKEN + source keys
+#   cp .env.example .env
 #   docker compose up -d --build
 #
-# Optional: bind-mount manual positions file (create it first):
-#   volumes on app/cron: - ./positions.local.json:/app/positions.local.json:ro
+# Local debug without Traefik: use docker-compose.local.yml
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# Optional: bind-mount manual positions (create file first):
+#   - ./positions.local.json:/app/positions.local.json:ro
 
 services:
   app:
@@ -23,11 +29,25 @@ services:
       DB_PATH: /data/portfolio.db
     volumes:
       - pfdata:/data
-    ports:
-      - "127.0.0.1:3000:3000"
+    networks:
+      - default
+      - proxy-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-net"
+      - "traefik.http.routers.portfolio-mcp.rule=Host(`truth-teller.online`)"
+      - "traefik.http.routers.portfolio-mcp.entrypoints=websecure"
+      - "traefik.http.routers.portfolio-mcp.tls.certresolver=myresolver"
+      - "traefik.http.services.portfolio-mcp.loadbalancer.server.port=3000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -47,6 +67,8 @@ services:
       DB_PATH: /data/portfolio.db
     volumes:
       - pfdata:/data
+    networks:
+      - default
     depends_on:
       app:
         condition: service_healthy
@@ -55,3 +77,7 @@ services:
 volumes:
   pfdata:
     name: portfolio-mcp-data
+
+networks:
+  proxy-net:
+    external: true

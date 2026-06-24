@@ -103,24 +103,24 @@ Both schemes work in parallel on `/mcp`. **Never expose HTTP without auth** — 
 
 Recommended VPS: **1 vCPU, 1 GB RAM, 10 GB disk**. Behind HTTPS reverse proxy (Caddy/nginx/Cloudflare Tunnel).
 
-### Docker Compose (recommended)
+### Docker Compose + Traefik (recommended)
 
 ```bash
-cp .env.example .env   # AUTH_TOKEN + source keys required
+cp .env.example .env   # AUTH_TOKEN, TRAEFIK_HOST, source keys
 docker compose up -d --build
 ```
 
-Services:
+Requires external Docker network `proxy-net` (same as your Traefik container). MCP URL: `https://<TRAEFIK_HOST>/mcp`.
 
 | Service | Role |
 |---------|------|
-| `app` | MCP HTTP on `127.0.0.1:3000` |
-| `cron` | UTC scheduler: daily/month snapshots + `detect_flows` |
-| volume `pfdata` | SQLite at `/data/portfolio.db` (shared) |
+| `app` | MCP HTTP :3000 behind Traefik |
+| `cron` | UTC scheduler (internal only) |
+| volume `pfdata` | SQLite at `/data/portfolio.db` |
 
-Cron schedule: `CRON_SNAPSHOT_*_UTC`, `CRON_DETECT_*_UTC` in `.env`. Details: [DOC.md § Deploy](DOC.md#8-деплой).
+Local debug without Traefik: `docker compose -f docker-compose.yml -f docker-compose.local.yml up -d`
 
-Full deploy guide (systemd, Caddy, backup): [DOC.md § Deploy](DOC.md#8-деплой).
+Details: [DOC.md § Deploy](DOC.md#docker-compose--traefik).
 
 ## Manual positions
 

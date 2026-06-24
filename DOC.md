@@ -305,23 +305,31 @@ Auth отсутствует by design. Граница безопасности �
 | ------------------ | ----------------------------------------------------- |
 | **Local stdio**    | Cursor spawn `bun run start:stdio`                    |
 | **Local HTTP**     | `127.0.0.1:3000/mcp` + Bearer                         |
-| **Production VPS** | Bun за reverse proxy (Caddy/nginx) + TLS + auth       |
+| **Production VPS** | Docker + Traefik + TLS + auth                         |
 | **Tunnel**         | ngrok → stateless `/mcp`, `OAUTH_ISSUER` = public URL |
 
-### Docker Compose (рекомендуется)
+### Docker Compose + Traefik
 
 ```bash
 cp .env.example .env
+# TRAEFIK_HOST=mcp.example.com
+# OAUTH_ISSUER=https://mcp.example.com   # если включён OAuth
 docker compose up -d --build
 ```
 
+Сеть `proxy-net` должна существовать (та же, что у контейнера Traefik).
+
 | Сервис | Назначение |
 |--------|------------|
-| **app** | MCP HTTP-сервер (`127.0.0.1:3000` → контейнер `0.0.0.0:3000`) |
-| **cron** | Планировщик: snapshots (`daily`, `month_start`, `month_end`) + `detect_flows` |
-| **volume `pfdata`** | SQLite `/data/portfolio.db` — общий для обоих сервисов |
+| **app** | MCP HTTP :3000, Traefik labels → `https://<host>/mcp` |
+| **cron** | Планировщик (только internal network, не в Traefik) |
+| **volume `pfdata`** | SQLite `/data/portfolio.db` |
 
-Образ: `oven/bun:1-alpine` (stable Bun 1.x на Alpine). После каждого cron-job — очистка in-process кэшей и `PRAGMA wal_checkpoint`; каждые 6 ч — purge expired OAuth tokens.
+Env: `TRAEFIK_HOST`, `TRAEFIK_ENTRYPOINT` (default `websecure`), `TRAEFIK_CERT_RESOLVER` (default `myresolver`).
+
+Локальный debug: `docker compose -f docker-compose.yml -f docker-compose.local.yml up -d` → `http://127.0.0.1:3000/mcp`.
+
+Образ: `oven/bun:1-alpine`. Cron maintenance: WAL checkpoint + purge OAuth tokens.
 
 Переменные cron (UTC):
 
@@ -337,7 +345,7 @@ docker compose up -d --build
 
 Опционально смонтируйте `positions.local.json` в оба сервиса (см. комментарии в `docker-compose.yml`).
 
-Healthcheck: `GET /health`. TLS — на внешнем reverse proxy (Caddy/nginx).
+Healthcheck: `GET /health`. TLS — Traefik (`websecure` + cert resolver).
 
 ### Установка без Docker
 

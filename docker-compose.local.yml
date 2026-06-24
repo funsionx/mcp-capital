@@ -1,0 +1,10 @@
+# Local override: publish MCP on localhost (no Traefik required for testing).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# When using this file, Traefik labels on `app` are ignored if Traefik is not running —
+# the app still joins proxy-net; create the network or comment out proxy-net in the main file.
+
+services:
+  app:
+    ports:
+      - "127.0.0.1:3000:3000"
